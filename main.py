@@ -321,5 +321,4 @@ if __name__ == '__main__':
     app = qt.QApplication(sys.argv)
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
     prog = mainWindow(app)
-    app.exec_()
-    sys.exit(0)
+    sys.exit(app.exec_())
