@@ -15,10 +15,13 @@ import nidaqmx
 import qdarkstyle # see https://github.com/ColinDuquesnoy/QDarkStyleSheet
 
 
+def pt_to_px(pt):
+    return round(pt*monitor_dpi/72)
+
 class hBox(qt.QWidget):
     def __init__(self):
         super().__init__()
-        self.setStyleSheet("QWidget{padding-left:0}")
+        self.setStyleSheet("QWidget{padding-left: 0;}")
         self.frame = qt.QHBoxLayout()
         self.frame.setContentsMargins(0,0,0,0)
         self.setLayout(self.frame)
@@ -27,7 +30,7 @@ class hLine(qt.QLabel):
     def __init__(self):
         super().__init__()
         self.setText("-"*50)
-        self.setMaximumHeight(8)
+        self.setMaximumHeight(pt_to_px(7))
 
 class formBox(qt.QGroupBox):
     def __init__(self):
@@ -49,7 +52,7 @@ class scrollArea(qt.QGroupBox):
         scroll = qt.QScrollArea()
         scroll.setWidgetResizable(True)
         # scroll.setFrameStyle(0x10) # see https://doc.qt.io/qt-5/qframe.html for different frame styles
-        scroll.setStyleSheet("QFrame{border: 0px}")
+        scroll.setStyleSheet("QFrame{border: 0px;}")
         outer_layout.addWidget(scroll)
 
         box = qt.QWidget()
@@ -84,7 +87,7 @@ class abstractLaserColumn(qt.QGroupBox):
     def __init__(self, parent):
         super().__init__()
         self.parent = parent
-        self.setMaximumWidth(160)
+        self.setMaximumWidth(pt_to_px(125))
 
         self.frame = qt.QVBoxLayout()
         self.frame.setContentsMargins(0,0,0,0)
@@ -208,17 +211,16 @@ class abstractLaserColumn(qt.QGroupBox):
 
         self.daq_in_cb = newComboBox()
         self.daq_in_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
-        self.daq_in_cb.setMaximumWidth(95)
+        self.daq_in_cb.setMaximumWidth(pt_to_px(74))
         daq_box.frame.addRow("DAQ ai:", self.daq_in_cb)
 
         self.daq_out_cb = newComboBox()
         self.daq_out_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
-        self.daq_out_cb.setMaximumWidth(95)
-        self.daq_out_cb.setMinimumContentsLength(20)
+        self.daq_out_cb.setMaximumWidth(pt_to_px(74))
         daq_box.frame.addRow("DAQ ao:", self.daq_out_cb)
 
         self.wavenum_dsb = newDoubleSpinBox()
-        self.wavenum_dsb.setMaximumWidth(95)
+        self.wavenum_dsb.setMaximumWidth(pt_to_px(74))
         self.wavenum_dsb.setRange(0, 20000)
         self.wavenum_dsb.setDecimals(1)
         self.wavenum_dsb.setSingleStep(1)
@@ -247,7 +249,7 @@ class cavityColumn(abstractLaserColumn):
         self.place_pid_box()
         self.place_voltage_box()
         self.place_daq_box()
-        self.update_daq_channel()
+        # self.update_daq_channel()
 
 
 class laserColumn(abstractLaserColumn):
@@ -261,7 +263,7 @@ class laserColumn(abstractLaserColumn):
         self.place_pid_box()
         self.place_voltage_box()
         self.place_daq_box()
-        self.update_daq_channel()
+        # self.update_daq_channel()
 
     def place_freq_widget(self):
         self.global_freq_la = qt.QLabel("0 MHz")
@@ -313,12 +315,14 @@ class mainWindow(qt.QMainWindow):
             self.laser_list.append(laserColumn(self))
             scrollregion.frame.addWidget(self.laser_list[-1])
 
-        self.resize(600, 600)
+        self.resize(pt_to_px(500), pt_to_px(500))
         self.show()
 
 
 if __name__ == '__main__':
     app = qt.QApplication(sys.argv)
+    screen = app.screens()
+    monitor_dpi = screen[0].physicalDotsPerInch()
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
     prog = mainWindow(app)
     sys.exit(app.exec_())
