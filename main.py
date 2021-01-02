@@ -86,9 +86,18 @@ class scrollArea(qt.QGroupBox):
         box.setLayout(self.frame)
 
 class newDoubleSpinBox(qt.QDoubleSpinBox):
-    def __init__(self):
+    def __init__(self, range=None, decimal=None, stepsize=None, suffix=None):
         super().__init__()
         self.setFocusPolicy(PyQt5.QtCore.Qt.StrongFocus)
+        # 0 != None
+        if range != None:
+            self.setRange(range[0], range[1])
+        if decimal != None:
+            self.setDecimals(decimal)
+        if stepsize != None:
+            self.setSingleStep(stepsize)
+        if suffix != None:
+            self.setSuffix(suffix)
 
     def wheelEvent(self, event):
         if self.hasFocus():
@@ -110,9 +119,6 @@ class newComboBox(qt.QComboBox):
 class newPlot(pg.PlotWidget):
     def __init__(self, parent):
         super().__init__()
-        # self.setSizePolicy(QtGui.QSizePolicy.Fixed, QtGui.QSizePolicy.Fixed)
-        # self.setGeometry(100,100, 200, 200)
-        # self.resize(500,150)
         tickstyle = {"showValues": False}
         fontstyle = {"color": "#919191", "font-size": "11pt"}
 
@@ -124,13 +130,13 @@ class newPlot(pg.PlotWidget):
 
         self.setLabel("bottom", "time", **fontstyle)
         self.getAxis("bottom").enableAutoSIPrefix(False)
-        self.cavity_curve = self.plot()
+        data = np.linspace(1, 100, 100)
+        self.cavity_curve = self.plot(data*4)
         self.cavity_curve.setPen('w')  ## white pen
         self.laser_curves = []
-        color_list = ['r', 'b', 'g']
         for i in range(3):
-            curve = self.plot()
-            curve.setPen(color_list[i])
+            curve = self.plot(data*i)
+            curve.setPen(parent.color_list[i%3])
             self.laser_curves.append(curve)
 
 class abstractLaserColumn(qt.QGroupBox):
@@ -149,11 +155,7 @@ class abstractLaserColumn(qt.QGroupBox):
         peak_box = newBox(layout_type="form")
         self.frame.addWidget(peak_box)
 
-        self.peak_height_dsb = newDoubleSpinBox()
-        self.peak_height_dsb.setRange(0, 10000)
-        self.peak_height_dsb.setDecimals(0)
-        self.peak_height_dsb.setSingleStep(10)
-        self.peak_height_dsb.setSuffix(" mV")
+        self.peak_height_dsb = newDoubleSpinBox(range=(0, 10), decimal=3, stepsize=0.01, suffix=" V")
         peak_box.frame.addRow("Peak height:", self.peak_height_dsb)
 
         self.peak_width_sb = qt.QSpinBox()
@@ -173,12 +175,7 @@ class abstractLaserColumn(qt.QGroupBox):
         pid_box = newBox(layout_type="form")
         self.frame.addWidget(pid_box)
 
-        self.kp_dsb = newDoubleSpinBox()
-        self.kp_dsb.setRange(-100, 100)
-        self.kp_dsb.setDecimals(2)
-        self.kp_dsb.setSingleStep(1)
-        self.kp_multiplier = "1e-5"
-        self.kp_dsb.setSuffix("  "+self.kp_multiplier)
+        self.kp_dsb = newDoubleSpinBox(range=(-100, 100), decimal=2, stepsize=1, suffix=None)
 
         self.kp_chb = qt.QCheckBox()
         self.kp_chb.setTristate(False)
@@ -186,14 +183,9 @@ class abstractLaserColumn(qt.QGroupBox):
         kp_box = newBox(layout_type="hbox")
         kp_box.frame.addWidget(self.kp_dsb)
         kp_box.frame.addWidget(self.kp_chb, alignment = PyQt5.QtCore.Qt.AlignRight)
-        pid_box.frame.addRow(r"KP:", kp_box)
+        pid_box.frame.addRow("KP:", kp_box)
 
-        self.ki_dsb = newDoubleSpinBox()
-        self.ki_dsb.setRange(-100, 100)
-        self.ki_dsb.setDecimals(2)
-        self.ki_dsb.setSingleStep(1)
-        self.ki_multiplier = "1e-3"
-        self.ki_dsb.setSuffix("  "+self.ki_multiplier)
+        self.ki_dsb = newDoubleSpinBox(range=(-100, 100), decimal=2, stepsize=1, suffix=None)
 
         self.ki_chb = qt.QCheckBox()
         self.ki_chb.setTristate(False)
@@ -203,12 +195,7 @@ class abstractLaserColumn(qt.QGroupBox):
         ki_box.frame.addWidget(self.ki_chb, alignment = PyQt5.QtCore.Qt.AlignRight)
         pid_box.frame.addRow("KI:", ki_box)
 
-        self.kd_dsb = newDoubleSpinBox()
-        self.kd_dsb.setRange(-100, 100)
-        self.kd_dsb.setDecimals(2)
-        self.kd_dsb.setSingleStep(1)
-        self.kd_multiplier = "1e-7"
-        self.kd_dsb.setSuffix("  "+self.kd_multiplier)
+        self.kd_dsb = newDoubleSpinBox(range=(-100, 100), decimal=2, stepsize=1, suffix=None)
 
         self.kd_chb = qt.QCheckBox()
         self.kd_chb.setTristate(False)
@@ -224,18 +211,10 @@ class abstractLaserColumn(qt.QGroupBox):
         voltage_box = newBox(layout_type="form")
         self.frame.addWidget(voltage_box)
 
-        self.offset_dsb = newDoubleSpinBox()
-        self.offset_dsb.setRange(-10, 10)
-        self.offset_dsb.setDecimals(2)
-        self.offset_dsb.setSingleStep(0.1)
-        self.offset_dsb.setSuffix(" V")
+        self.offset_dsb = newDoubleSpinBox(range=(-10, 10), decimal=2, stepsize=0.1, suffix=" V")
         voltage_box.frame.addRow("Offset:", self.offset_dsb)
 
-        self.limit_dsb = newDoubleSpinBox()
-        self.limit_dsb.setRange(-10, 10)
-        self.limit_dsb.setDecimals(3)
-        self.limit_dsb.setSingleStep(0.01)
-        self.limit_dsb.setSuffix(" V")
+        self.limit_dsb = newDoubleSpinBox(range=(-10, 10), decimal=3, stepsize=0.01, suffix=" V")
         voltage_box.frame.addRow("Limit:", self.limit_dsb)
 
         self.daq_output_la = qt.QLabel("0 V")
@@ -263,12 +242,8 @@ class abstractLaserColumn(qt.QGroupBox):
         self.daq_out_cb.setMaximumWidth(pt_to_px(74))
         daq_box.frame.addRow("DAQ ao:", self.daq_out_cb)
 
-        self.wavenum_dsb = newDoubleSpinBox()
+        self.wavenum_dsb = newDoubleSpinBox(range=(0, 20000), decimal=1, stepsize=1, suffix="  1/cm")
         self.wavenum_dsb.setMaximumWidth(pt_to_px(74))
-        self.wavenum_dsb.setRange(0, 20000)
-        self.wavenum_dsb.setDecimals(1)
-        self.wavenum_dsb.setSingleStep(1)
-        self.wavenum_dsb.setSuffix("  1/cm")
         daq_box.frame.addRow("Wave #:", self.wavenum_dsb)
 
     def update_daq_channel(self):
@@ -282,6 +257,43 @@ class abstractLaserColumn(qt.QGroupBox):
             for j in ch_collect.channel_names:
                 self.daq_out_cb.addItem(j)
 
+    def update_config(self, config):
+        self.config = {}
+        self.config["peak height"] = config.getfloat("peak height/V")
+        self.config["peak width"] = config.getint("peak width/pts")
+        self.config["kp multiplier"] = config.getfloat("kp multiplier")
+        self.config["kp"] = config.getfloat("kp")
+        self.config["kp on"] = config.getboolean("kp on")
+        self.config["ki multiplier"] = config.getfloat("ki multiplier")
+        self.config["ki"] = config.getfloat("ki")
+        self.config["ki on"] = config.getboolean("ki on")
+        self.config["kd multiplier"] = config.getfloat("kd multiplier")
+        self.config["kd"] = config.getfloat("kd")
+        self.config["kd on"] = config.getboolean("kd on")
+        self.config["offset"] = config.getfloat("offset/V")
+        self.config["limit"] = config.getfloat("limit/V")
+        self.config["daq ai"] = config.get("daq ai")
+        self.config["daq ao"] = config.get("daq ao")
+        self.config["wavenumber"] = config.getfloat("wavenumber/cm-1")
+
+    def update_widgets(self):
+        self.peak_height_dsb.setValue(self.config["peak height"])
+        self.peak_width_sb.setValue(self.config["peak width"])
+        self.kp_dsb.setSuffix(" x"+np.format_float_scientific(self.config["kp multiplier"], exp_digits=1))
+        self.kp_dsb.setValue(self.config["kp"])
+        self.kp_chb.setChecked(self.config["kp on"])
+        self.ki_dsb.setSuffix(" x"+np.format_float_scientific(self.config["ki multiplier"], exp_digits=1))
+        self.ki_dsb.setValue(self.config["ki"])
+        self.ki_chb.setChecked(self.config["ki on"])
+        self.kd_dsb.setSuffix(" x"+np.format_float_scientific(self.config["kd multiplier"], exp_digits=1))
+        self.kd_dsb.setValue(self.config["kd"])
+        self.kd_chb.setChecked(self.config["kd on"])
+        self.offset_dsb.setValue(self.config["offset"])
+        self.limit_dsb.setValue(self.config["limit"])
+        self.daq_in_cb.setCurrentText(self.config["daq ai"])
+        self.daq_out_cb.setCurrentText(self.config["daq ao"])
+        self.wavenum_dsb.setValue(self.config["wavenumber"])
+
 
 class cavityColumn(abstractLaserColumn):
     def __init__(self, parent):
@@ -294,13 +306,13 @@ class cavityColumn(abstractLaserColumn):
         self.place_pid_box()
         self.place_voltage_box()
         self.place_daq_box()
-        self.update_daq_channel()
+        # self.update_daq_channel()
 
     def place_label(self):
         la = qt.QLabel("Cavity/HeNe")
         la.setStyleSheet("QLabel{font: 16pt;}")
         self.frame.addWidget(la, alignment=PyQt5.QtCore.Qt.AlignHCenter)
-        self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
+        # self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
 
     def place_freq_widget(self):
         self.first_peak_la = qt.QLabel("0")
@@ -309,11 +321,16 @@ class cavityColumn(abstractLaserColumn):
         self.peak_sep_la = qt.QLabel("0")
         self.freq_box.frame.addRow("Pk-pk sep.:", self.peak_sep_la)
 
-        self.setpoint_dsb = newDoubleSpinBox()
-        self.setpoint_dsb.setRange(-100, 100)
-        self.setpoint_dsb.setDecimals(5)
-        self.setpoint_dsb.setSingleStep(0.001)
+        self.setpoint_dsb = newDoubleSpinBox(range=(-100, 100), decimal=2, stepsize=0.1, suffix=" ms")
         self.freq_box.frame.addRow("Set point:", self.setpoint_dsb)
+
+    def update_config(self, config):
+        super().update_config(config)
+        self.config["set point"] = config.getfloat("set point/ms")
+
+    def update_widgets(self):
+        super().update_widgets()
+        self.setpoint_dsb.setValue(self.config["set point"])
 
 
 class laserColumn(abstractLaserColumn):
@@ -327,21 +344,21 @@ class laserColumn(abstractLaserColumn):
         self.place_pid_box()
         self.place_voltage_box()
         self.place_daq_box()
-        self.update_daq_channel()
+        # self.update_daq_channel()
 
     def place_label(self):
-        label_box = newBox(layout_type="hbox")
+        self.label_box = newBox(layout_type="hbox")
         la = qt.QLabel("  Laser:")
-        la.setStyleSheet("QLabel{font: 16pt;}")
-        label_box.frame.addWidget(la, alignment=PyQt5.QtCore.Qt.AlignRight)
+        la.setStyleSheet("QLabel{font: 16pt; background: transparent;}")
+        self.label_box.frame.addWidget(la, alignment=PyQt5.QtCore.Qt.AlignRight)
 
         self.label_le = qt.QLineEdit()
-        self.label_le.setStyleSheet("QLineEdit{font: 16pt;}")
+        self.label_le.setStyleSheet("QLineEdit{font: 16pt; background: transparent;}")
         self.label_le.setMaximumWidth(pt_to_px(30))
-        label_box.frame.addWidget(self.label_le, alignment=PyQt5.QtCore.Qt.AlignLeft)
-        self.frame.addWidget(label_box)
+        self.label_box.frame.addWidget(self.label_le, alignment=PyQt5.QtCore.Qt.AlignLeft)
+        self.frame.addWidget(self.label_box)
 
-        self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
+        # self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
 
     def place_freq_widget(self):
         self.global_freq_la = qt.QLabel("0 MHz")
@@ -356,12 +373,8 @@ class laserColumn(abstractLaserColumn):
         global_box.frame.addWidget(self.global_rb, alignment=PyQt5.QtCore.Qt.AlignRight)
         self.freq_box.frame.addRow("G. F.:", global_box)
 
-        self.local_freq_dsb = newDoubleSpinBox()
+        self.local_freq_dsb = newDoubleSpinBox(range=(0, 1500), decimal=1, stepsize=1, suffix=" MHz")
         self.local_freq_dsb.setToolTip("Local Frequency")
-        self.local_freq_dsb.setRange(0, 1500)
-        self.local_freq_dsb.setDecimals(1)
-        self.local_freq_dsb.setSingleStep(1)
-        self.local_freq_dsb.setSuffix(" MHz")
 
         self.local_rb = qt.QRadioButton()
         self.local_rb.setChecked(True)
@@ -376,12 +389,32 @@ class laserColumn(abstractLaserColumn):
         self.actual_freq_la.setToolTip("Actual Frequency")
         self.freq_box.frame.addRow("A. F.:", self.actual_freq_la)
 
+    def update_config(self, config):
+        super().update_config(config)
+        self.config["label"] = config.get("label")
+        self.config["local freq"] = config.getfloat("local freq/MHz")
+        self.config["freq source"] = config.get("freq source")
+
+    def update_widgets(self):
+        super().update_widgets()
+        self.label_le.setText(self.config["label"])
+        self.local_freq_dsb.setValue(self.config["local freq"])
+        if self.config["freq source"] != "global":
+            self.local_rb.setChecked(True)
+        else:
+            self.global_rb.setChecked(True)
+
 
 class mainWindow(qt.QMainWindow):
     def __init__(self, app):
         super().__init__()
         self.app = app
         self.setWindowTitle("Transfer Cavity Laser Lock")
+        self.color_list = ["#800000", "#008080", "#000080"]
+
+        cf = configparser.ConfigParser()
+        cf.optionxform = str # make config key name case sensitive
+        cf.read("defaults.ini")
 
         self.box = newBox(layout_type="grid")
         self.box.frame.setRowStretch(0, 3)
@@ -391,7 +424,7 @@ class mainWindow(qt.QMainWindow):
         self.scan_plot = newPlot(self)
         self.box.frame.addWidget(self.scan_plot, 0, 0)
 
-        ctrl_box = self.place_controls()
+        ctrl_box = self.place_controls(cf["Setting"].getint("num of lasers"))
         self.box.frame.addWidget(ctrl_box, 1, 0)
 
         self.err_plot = newPlot(self)
@@ -401,30 +434,108 @@ class mainWindow(qt.QMainWindow):
         self.resize(pt_to_px(500), pt_to_px(500))
         self.show()
 
-    def place_controls(self):
+        self.update_config(cf)
+        self.update_widgets()
+
+    def place_controls(self, num_lasers):
         control_box = scrollArea(layout_type="vbox", scroll_type="both")
+
+        start_box = newBox(layout_type="hbox")
+        control_box.frame.addWidget(start_box)
+
+        self.start_pb = qt.QPushButton("Start Lock")
+        start_box.frame.addWidget(self.start_pb)
+        self.toggle_pb = qt.QPushButton("Toggle more control")
+        self.toggle_pb.clicked[bool].connect(lambda val: self.toggle_more_ctrl())
+        start_box.frame.addWidget(self.toggle_pb)
+
+        self.scan_box = newBox(layout_type="grid")
+        self.scan_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
+        control_box.frame.addWidget(self.scan_box)
+
+        self.scan_box.frame.addWidget(qt.QLabel("Scan amp:"), 0, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.scan_amp_dsb = newDoubleSpinBox(range=(0, 10), decimal=2, stepsize=0.1, suffix=" V")
+        self.scan_box.frame.addWidget(self.scan_amp_dsb, 0, 1)
+
+        self.scan_box.frame.addWidget(qt.QLabel("Scan time:"), 0, 2, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.scan_time_dsb = newDoubleSpinBox(range=(0, 100), decimal=1, stepsize=0.1, suffix=" ms")
+        self.scan_box.frame.addWidget(self.scan_time_dsb, 0, 3)
+
+        self.scan_box.frame.addWidget(qt.QLabel("Scan ignore:"), 0, 4, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.scan_ignore_dsb = newDoubleSpinBox(range=(0, 100), decimal=2, stepsize=0.1, suffix=" ms")
+        self.scan_box.frame.addWidget(self.scan_ignore_dsb, 0, 5)
+
+        self.scan_box.frame.addWidget(qt.QLabel("Cavity FSR:"), 1, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.cavity_fsr_dsb = newDoubleSpinBox(range=(0, 10000), decimal=1, stepsize=1, suffix=" MHz")
+        self.scan_box.frame.addWidget(self.cavity_fsr_dsb, 1, 1)
+
+        self.scan_box.frame.addWidget(qt.QLabel("Lock Criteria:"), 1, 2, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.lock_criteria_dsb = newDoubleSpinBox(range=(0, 100), decimal=1, stepsize=1, suffix=" MHz")
+        self.scan_box.frame.addWidget(self.lock_criteria_dsb, 1, 3)
+
+        self.scan_box.frame.addWidget(qt.QLabel("RMS Length:"), 1, 4, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.rms_length_sb = qt.QSpinBox()
+        self.rms_length_sb.setRange(0, 10000)
+        self.scan_box.frame.addWidget(self.rms_length_sb, 1, 5)
+
+        self.file_box = newBox(layout_type="hbox")
+        self.file_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
+        control_box.frame.addWidget(self.file_box)
+
+        self.file_name_le = qt.QLineEdit("saved_settings/")
+        self.file_name_le.setMaximumWidth(pt_to_px(150))
+        self.file_box.frame.addWidget(self.file_name_le)
+
+        self.date_time_chb = qt.QCheckBox("Auto append date/time")
+        self.date_time_chb.setTristate(False)
+        self.file_box.frame.addWidget(self.date_time_chb, alignment = PyQt5.QtCore.Qt.AlignHCenter)
+
+        self.save_setting_pb = qt.QPushButton("Save setting")
+        self.file_box.frame.addWidget(self.save_setting_pb)
+
+        self.load_setting_pb = qt.QPushButton("Load setting")
+        self.file_box.frame.addWidget(self.load_setting_pb)
+
+        self.refresh_daq_pb = qt.QPushButton("Refresh DAQ channel")
+        self.file_box.frame.addWidget(self.refresh_daq_pb)
+
         laser_box = newBox(layout_type="hbox")
         control_box.frame.addWidget(laser_box)
 
         self.cavity = cavityColumn(self)
         laser_box.frame.addWidget(self.cavity)
         self.laser_list = []
-        for i in range(3):
-            self.laser_list.append(laserColumn(self))
-            laser_box.frame.addWidget(self.laser_list[-1])
-
-        file_box = newBox(layout_type="grid")
-        control_box.frame.addWidget(file_box)
-        file_box.frame.addWidget(qt.QLabel("file names888888888888888888888"), 0, 0)
+        for i in range(num_lasers):
+            laser = laserColumn(self)
+            laser.label_box.setStyleSheet("QGroupBox{background: "+self.color_list[i%3]+"}")
+            self.laser_list.append(laser)
+            laser_box.frame.addWidget(laser)
 
         return control_box
+
+    def update_config(config):
+        pass
+
+    def update_widgets():
+        pass
+
+    def toggle_more_ctrl(self):
+        if self.scan_box.isVisible():
+            self.scan_box.hide()
+        else:
+            self.scan_box.show()
+
+        if self.file_box.isVisible():
+            self.file_box.hide()
+        else:
+            self.file_box.show()
 
 
 if __name__ == '__main__':
     app = qt.QApplication(sys.argv)
     # screen = app.screens()
     # monitor_dpi = screen[0].physicalDotsPerInch()
-    monitor_dpi = 92
+    monitor_dpi = 183
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
     prog = mainWindow(app)
     sys.exit(app.exec_())
