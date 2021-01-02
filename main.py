@@ -130,14 +130,6 @@ class newPlot(pg.PlotWidget):
 
         self.setLabel("bottom", "time", **fontstyle)
         self.getAxis("bottom").enableAutoSIPrefix(False)
-        data = np.linspace(1, 100, 100)
-        self.cavity_curve = self.plot(data*4)
-        self.cavity_curve.setPen('w')  ## white pen
-        self.laser_curves = []
-        for i in range(3):
-            curve = self.plot(data*i)
-            curve.setPen(parent.color_list[i%3])
-            self.laser_curves.append(curve)
 
 class abstractLaserColumn(qt.QGroupBox):
     def __init__(self, parent):
@@ -151,16 +143,22 @@ class abstractLaserColumn(qt.QGroupBox):
         self.frame.setSpacing(0)
         self.setLayout(self.frame)
 
+        self.config = {}
+        self.scan_curve = None
+        self.err_curve = None
+
     def place_peak_box(self):
         peak_box = newBox(layout_type="form")
         self.frame.addWidget(peak_box)
 
         self.peak_height_dsb = newDoubleSpinBox(range=(0, 10), decimal=3, stepsize=0.01, suffix=" V")
+        self.peak_height_dsb.valueChanged[float].connect(lambda val, text="peak height": self.update_config_elem(text, val))
         peak_box.frame.addRow("Peak height:", self.peak_height_dsb)
 
         self.peak_width_sb = qt.QSpinBox()
         self.peak_width_sb.setRange(0, 1000)
         self.peak_width_sb.setSuffix(" pts")
+        self.peak_width_sb.valueChanged[int].connect(lambda val, text="peak width": self.update_config_elem(text, val))
         peak_box.frame.addRow("Peak width:", self.peak_width_sb)
 
         self.frame.addWidget(hLine(), alignment = PyQt5.QtCore.Qt.AlignHCenter)
@@ -176,8 +174,10 @@ class abstractLaserColumn(qt.QGroupBox):
         self.frame.addWidget(pid_box)
 
         self.kp_dsb = newDoubleSpinBox(range=(-100, 100), decimal=2, stepsize=1, suffix=None)
+        self.kp_dsb.valueChanged[float].connect(lambda val, text="kp": self.update_config_elem(text, val))
 
         self.kp_chb = qt.QCheckBox()
+        self.kp_chb.toggled[bool].connect(lambda val, text="kp on": self.update_config_elem(text, val))
         self.kp_chb.setTristate(False)
 
         kp_box = newBox(layout_type="hbox")
@@ -186,8 +186,10 @@ class abstractLaserColumn(qt.QGroupBox):
         pid_box.frame.addRow("KP:", kp_box)
 
         self.ki_dsb = newDoubleSpinBox(range=(-100, 100), decimal=2, stepsize=1, suffix=None)
+        self.ki_dsb.valueChanged[float].connect(lambda val, text="ki": self.update_config_elem(text, val))
 
         self.ki_chb = qt.QCheckBox()
+        self.ki_chb.toggled[bool].connect(lambda val, text="ki on": self.update_config_elem(text, val))
         self.ki_chb.setTristate(False)
 
         ki_box = newBox(layout_type="hbox")
@@ -196,8 +198,10 @@ class abstractLaserColumn(qt.QGroupBox):
         pid_box.frame.addRow("KI:", ki_box)
 
         self.kd_dsb = newDoubleSpinBox(range=(-100, 100), decimal=2, stepsize=1, suffix=None)
+        self.kd_dsb.valueChanged[float].connect(lambda val, text="kd": self.update_config_elem(text, val))
 
         self.kd_chb = qt.QCheckBox()
+        self.kd_chb.toggled[bool].connect(lambda val, text="kd on": self.update_config_elem(text, val))
         self.kd_chb.setTristate(False)
 
         kd_box = newBox(layout_type="hbox")
@@ -212,9 +216,11 @@ class abstractLaserColumn(qt.QGroupBox):
         self.frame.addWidget(voltage_box)
 
         self.offset_dsb = newDoubleSpinBox(range=(-10, 10), decimal=2, stepsize=0.1, suffix=" V")
+        self.offset_dsb.valueChanged[float].connect(lambda val, text="offset": self.update_config_elem(text, val))
         voltage_box.frame.addRow("Offset:", self.offset_dsb)
 
         self.limit_dsb = newDoubleSpinBox(range=(-10, 10), decimal=3, stepsize=0.01, suffix=" V")
+        self.limit_dsb.valueChanged[float].connect(lambda val, text="limit": self.update_config_elem(text, val))
         voltage_box.frame.addRow("Limit:", self.limit_dsb)
 
         self.daq_output_la = qt.QLabel("0 V")
@@ -235,15 +241,18 @@ class abstractLaserColumn(qt.QGroupBox):
         self.daq_in_cb = newComboBox()
         self.daq_in_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
         self.daq_in_cb.setMaximumWidth(pt_to_px(74))
+        self.daq_in_cb.currentTextChanged[str].connect(lambda val, text="daq ai": self.update_config_elem(text, val))
         daq_box.frame.addRow("DAQ ai:", self.daq_in_cb)
 
         self.daq_out_cb = newComboBox()
         self.daq_out_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
         self.daq_out_cb.setMaximumWidth(pt_to_px(74))
+        self.daq_out_cb.currentTextChanged[str].connect(lambda val, text="daq ao": self.update_config_elem(text, val))
         daq_box.frame.addRow("DAQ ao:", self.daq_out_cb)
 
         self.wavenum_dsb = newDoubleSpinBox(range=(0, 20000), decimal=1, stepsize=1, suffix="  1/cm")
         self.wavenum_dsb.setMaximumWidth(pt_to_px(74))
+        self.wavenum_dsb.valueChanged[float].connect(lambda val, text="wavenumber": self.update_config_elem(text, val))
         daq_box.frame.addRow("Wave #:", self.wavenum_dsb)
 
     def update_daq_channel(self):
@@ -257,8 +266,10 @@ class abstractLaserColumn(qt.QGroupBox):
             for j in ch_collect.channel_names:
                 self.daq_out_cb.addItem(j)
 
+    def update_config_elem(self, text, val):
+        self.config[text] = val
+
     def update_config(self, config):
-        self.config = {}
         self.config["peak height"] = config.getfloat("peak height/V")
         self.config["peak width"] = config.getint("peak width/pts")
         self.config["kp multiplier"] = config.getfloat("kp multiplier")
@@ -291,9 +302,31 @@ class abstractLaserColumn(qt.QGroupBox):
         self.offset_dsb.setValue(self.config["offset"])
         self.limit_dsb.setValue(self.config["limit"])
         self.daq_in_cb.setCurrentText(self.config["daq ai"])
+        self.config["daq ai"] = self.daq_in_cb.currentText()
         self.daq_out_cb.setCurrentText(self.config["daq ao"])
+        self.config["daq ao"] = self.daq_out_cb.currentText()
         self.wavenum_dsb.setValue(self.config["wavenumber"])
 
+    def save_config(self):
+        config = {}
+        config["peak height/V"] = str(self.config["peak height"])
+        config["peak width/pts"] = str(self.config["peak width"])
+        config["kp multiplier"] = str(self.config["kp multiplier"])
+        config["kp"] = str(self.config["kp"])
+        config["kp on"] = str(self.config["kp on"])
+        config["ki multiplier"] = str(self.config["ki multiplier"])
+        config["ki"] = str(self.config["ki"])
+        config["ki on"] = str(self.config["ki on"])
+        config["kd multiplier"] = str(self.config["kd multiplier"])
+        config["kd"] = str(self.config["kd"])
+        config["kd on"] = str(self.config["kd on"])
+        config["offset/V"] = str(self.config["offset"])
+        config["limit/V"] = str(self.config["limit"])
+        config["daq ai"] = self.config["daq ai"]
+        config["daq ao"] = self.config["daq ai"]
+        config["wavenumber/cm-1"] = str(self.config["wavenumber"])
+
+        return config
 
 class cavityColumn(abstractLaserColumn):
     def __init__(self, parent):
@@ -322,6 +355,7 @@ class cavityColumn(abstractLaserColumn):
         self.freq_box.frame.addRow("Pk-pk sep.:", self.peak_sep_la)
 
         self.setpoint_dsb = newDoubleSpinBox(range=(-100, 100), decimal=2, stepsize=0.1, suffix=" ms")
+        self.setpoint_dsb.valueChanged[float].connect(lambda val, text="setpoint": self.update_config_elem(text, val))
         self.freq_box.frame.addRow("Set point:", self.setpoint_dsb)
 
     def update_config(self, config):
@@ -332,6 +366,11 @@ class cavityColumn(abstractLaserColumn):
         super().update_widgets()
         self.setpoint_dsb.setValue(self.config["set point"])
 
+    def save_config(self):
+        config = super().save_config()
+        config["set point/ms"] = str(self.config["set point"])
+
+        return config
 
 class laserColumn(abstractLaserColumn):
     def __init__(self, parent):
@@ -355,6 +394,7 @@ class laserColumn(abstractLaserColumn):
         self.label_le = qt.QLineEdit()
         self.label_le.setStyleSheet("QLineEdit{font: 16pt; background: transparent;}")
         self.label_le.setMaximumWidth(pt_to_px(30))
+        self.label_le.textChanged[str].connect(lambda val, text="label": self.update_config_elem(text, val))
         self.label_box.frame.addWidget(self.label_le, alignment=PyQt5.QtCore.Qt.AlignLeft)
         self.frame.addWidget(self.label_box)
 
@@ -365,6 +405,7 @@ class laserColumn(abstractLaserColumn):
         self.global_freq_la.setToolTip("Global Frequency")
 
         self.global_rb = qt.QRadioButton()
+        self.global_rb.toggled[bool].connect(lambda val, source="global": self.set_freq_source(source, val))
         rbgroup = qt.QButtonGroup(self.parent)
         rbgroup.addButton(self.global_rb)
 
@@ -375,8 +416,9 @@ class laserColumn(abstractLaserColumn):
 
         self.local_freq_dsb = newDoubleSpinBox(range=(0, 1500), decimal=1, stepsize=1, suffix=" MHz")
         self.local_freq_dsb.setToolTip("Local Frequency")
-
+        self.local_freq_dsb.valueChanged[float].connect(lambda val, text="local freq": self.update_config_elem(text, val))
         self.local_rb = qt.QRadioButton()
+        self.local_rb.toggled[bool].connect(lambda val, source="local": self.set_freq_source(source, val))
         self.local_rb.setChecked(True)
         rbgroup.addButton(self.local_rb)
 
@@ -404,6 +446,17 @@ class laserColumn(abstractLaserColumn):
         else:
             self.global_rb.setChecked(True)
 
+    def save_config(self):
+        config = super().save_config()
+        config["label"] = self.config["label"]
+        config["local freq/MHz"] = str(self.config["local freq"])
+        config["freq source"] = self.config["freq source"]
+
+        return config
+
+    def set_freq_source(self, source, val):
+        if val:
+            self.update_config_elem("freq source", source)
 
 class mainWindow(qt.QMainWindow):
     def __init__(self, app):
@@ -411,10 +464,8 @@ class mainWindow(qt.QMainWindow):
         self.app = app
         self.setWindowTitle("Transfer Cavity Laser Lock")
         self.color_list = ["#800000", "#008080", "#000080"]
-
-        cf = configparser.ConfigParser()
-        cf.optionxform = str # make config key name case sensitive
-        cf.read("defaults.ini")
+        self.config = {}
+        self.active = False
 
         self.box = newBox(layout_type="grid")
         self.box.frame.setRowStretch(0, 3)
@@ -424,26 +475,31 @@ class mainWindow(qt.QMainWindow):
         self.scan_plot = newPlot(self)
         self.box.frame.addWidget(self.scan_plot, 0, 0)
 
-        ctrl_box = self.place_controls(cf["Setting"].getint("num of lasers"))
-        self.box.frame.addWidget(ctrl_box, 1, 0)
-
         self.err_plot = newPlot(self)
         self.box.frame.addWidget(self.err_plot, 2, 0)
+
+        ctrl_box = self.place_controls()
+        self.box.frame.addWidget(ctrl_box, 1, 0)
 
         self.setCentralWidget(self.box)
         self.resize(pt_to_px(500), pt_to_px(500))
         self.show()
 
+        cf = configparser.ConfigParser()
+        cf.optionxform = str # make config key name case sensitive
+        cf.read("defaults.ini")
+
         self.update_config(cf)
         self.update_widgets()
 
-    def place_controls(self, num_lasers):
+    def place_controls(self):
         control_box = scrollArea(layout_type="vbox", scroll_type="both")
 
         start_box = newBox(layout_type="hbox")
         control_box.frame.addWidget(start_box)
 
         self.start_pb = qt.QPushButton("Start Lock")
+        self.start_pb.clicked[bool].connect(lambda val:self.start())
         start_box.frame.addWidget(self.start_pb)
         self.toggle_pb = qt.QPushButton("Toggle more control")
         self.toggle_pb.clicked[bool].connect(lambda val: self.toggle_more_ctrl())
@@ -482,42 +538,135 @@ class mainWindow(qt.QMainWindow):
         self.file_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
         control_box.frame.addWidget(self.file_box)
 
-        self.file_name_le = qt.QLineEdit("saved_settings/")
+        self.file_name_le = qt.QLineEdit("cavity_lock_setting")
         self.file_name_le.setMaximumWidth(pt_to_px(150))
         self.file_box.frame.addWidget(self.file_name_le)
 
         self.date_time_chb = qt.QCheckBox("Auto append date/time")
         self.date_time_chb.setTristate(False)
+        self.date_time_chb.setChecked(True)
         self.file_box.frame.addWidget(self.date_time_chb, alignment = PyQt5.QtCore.Qt.AlignHCenter)
 
         self.save_setting_pb = qt.QPushButton("Save setting")
+        self.save_setting_pb.clicked[bool].connect(lambda val: self.save_setting())
         self.file_box.frame.addWidget(self.save_setting_pb)
 
         self.load_setting_pb = qt.QPushButton("Load setting")
+        self.load_setting_pb.clicked[bool].connect(lambda val: self.load_setting())
         self.file_box.frame.addWidget(self.load_setting_pb)
 
         self.refresh_daq_pb = qt.QPushButton("Refresh DAQ channel")
+        self.refresh_daq_pb.clicked[bool].connect(lambda val: self.refreh_daq_ch())
         self.file_box.frame.addWidget(self.refresh_daq_pb)
 
-        laser_box = newBox(layout_type="hbox")
-        control_box.frame.addWidget(laser_box)
+        self.laser_box = newBox(layout_type="hbox")
+        control_box.frame.addWidget(self.laser_box)
 
         self.cavity = cavityColumn(self)
-        laser_box.frame.addWidget(self.cavity)
+        self.cavity.scan_curve = self.scan_plot.plot(np.linspace(0, 100, 100)*4)
+        self.cavity.scan_curve.setPen('w')
+        self.cavity.err_curve = self.err_plot.plot(np.linspace(0, 100, 100)*4)
+        self.cavity.err_curve.setPen('w')
+        self.laser_box.frame.addWidget(self.cavity)
         self.laser_list = []
-        for i in range(num_lasers):
-            laser = laserColumn(self)
-            laser.label_box.setStyleSheet("QGroupBox{background: "+self.color_list[i%3]+"}")
-            self.laser_list.append(laser)
-            laser_box.frame.addWidget(laser)
 
         return control_box
 
-    def update_config(config):
-        pass
+    def update_lasers(self, num_lasers):
+        while num_lasers > len(self.laser_list):
+            laser = laserColumn(self)
+            laser.scan_curve = self.scan_plot.plot(np.linspace(0, 100, 100)*len(self.laser_list))
+            laser.scan_curve.setPen(self.color_list[len(self.laser_list)%3])
+            laser.err_curve = self.err_plot.plot(np.linspace(0, 100, 100)*len(self.laser_list))
+            laser.err_curve.setPen(self.color_list[len(self.laser_list)%3])
+            laser.label_box.setStyleSheet("QGroupBox{background: "+self.color_list[len(self.laser_list)%3]+"}")
+            self.laser_list.append(laser)
+            self.laser_box.frame.addWidget(laser)
 
-    def update_widgets():
-        pass
+        while num_lasers < len(self.laser_list):
+            self.laser_list[-1].scan_curve.clear()
+            self.laser_list[-1].err_curve.clear()
+            self.laser_list[-1].setParent(None)
+            del self.laser_list[-1]
+
+    def update_config(self, config):
+
+        self.config["scan amp"] = config["Setting"].getfloat("scan amp/V")
+        self.config["scan time"] = config["Setting"].getfloat("scan time/ms")
+        self.config["scan ignore"] = config["Setting"].getfloat("scan ignore/ms")
+        self.config["cavity FSR"] = config["Setting"].getfloat("cavity FSR/MHz")
+        self.config["lock criteria"] = config["Setting"].getfloat("lock criteria/MHz")
+        self.config["RMS length"] = config["Setting"].getint("RMS length")
+        self.config["num of lasers"] = config["Setting"].getint("num of lasers")
+
+        self.update_lasers(self.config["num of lasers"])
+        self.cavity.update_config(config["Cavity"])
+        for i, laser in enumerate(self.laser_list):
+            laser.update_config(config[f"Laser{i}"])
+
+    def update_widgets(self):
+        self.scan_amp_dsb.setValue(self.config["scan amp"])
+        self.scan_time_dsb.setValue(self.config["scan time"])
+        self.scan_ignore_dsb.setValue(self.config["scan ignore"])
+        self.cavity_fsr_dsb.setValue(self.config["cavity FSR"])
+        self.lock_criteria_dsb.setValue(self.config["lock criteria"])
+        self.rms_length_sb.setValue(self.config["RMS length"])
+
+        self.cavity.update_widgets()
+        for laser in self.laser_list:
+            laser.update_widgets()
+
+    def load_setting(self):
+        # open a file dialog to choose a configuration file to load
+        file_name, _ = qt.QFileDialog.getOpenFileName(self,"Load settigns", "saved_settings/", "All Files (*);;INI File (*.ini)")
+        if not file_name:
+            return
+
+        config = configparser.ConfigParser()
+        config.read(file_name)
+
+        self.update_config(config)
+        self.update_widgets()
+
+    def save_setting(self):
+        # compile file name
+        file_name = ""
+        if self.file_name_le.text():
+            file_name += self.file_name_le.text()
+        if self.date_time_chb.isChecked():
+            if file_name != "":
+                file_name += "_"
+            file_name += time.strftime("%Y%m%d_%H%M%S")
+        file_name += ".ini"
+        file_name = r"saved_settings/"+file_name
+
+        # check if the file name already exists
+        if os.path.exists(file_name):
+            overwrite = qt.QMessageBox.warning(self, 'File name exists',
+                                            'File name already exists. Continue to overwrite it?',
+                                            qt.QMessageBox.Yes | qt.QMessageBox.No,
+                                            qt.QMessageBox.No)
+            if overwrite == qt.QMessageBox.No:
+                return
+
+        config = configparser.ConfigParser()
+
+        config["Setting"] = {}
+        config["Setting"]["scan amp/V"] = str(self.config["scan amp"])
+        config["Setting"]["scan time/ms"] = str(self.config["scan time"])
+        config["Setting"]["scan ignore/ms"] = str(self.config["scan ignore"])
+        config["Setting"]["cavity FSR/MHz"] = str(self.config["cavity FSR"])
+        config["Setting"]["lock criteria/MHz"] = str(self.config["lock criteria"])
+        config["Setting"]["RMS length"] = str(self.config["RMS length"])
+        config["Setting"]["num of lasers"] = str(len(self.laser_list))
+
+        config["Cavity"] = self.cavity.save_config()
+        for i, laser in enumerate(self.laser_list):
+            config[f"Laser{i}"] = laser.save_config()
+
+        configfile = open(file_name, "w")
+        config.write(configfile)
+        configfile.close()
 
     def toggle_more_ctrl(self):
         if self.scan_box.isVisible():
@@ -529,6 +678,14 @@ class mainWindow(qt.QMainWindow):
             self.file_box.hide()
         else:
             self.file_box.show()
+
+    def refreh_daq_ch(self):
+        self.cavity.update_daq_channel()
+        for laser in self.laser_list:
+            laser.update_daq_channel()
+
+    def start(self):
+        pass
 
 
 if __name__ == '__main__':
