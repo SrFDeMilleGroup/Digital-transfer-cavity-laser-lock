@@ -13,7 +13,7 @@ import PyQt5.QtWidgets as qt
 import os
 import nidaqmx
 import qdarkstyle # see https://github.com/ColinDuquesnoy/QDarkStyleSheet
-
+import re
 
 def pt_to_px(pt):
     return round(pt*monitor_dpi/72)
@@ -339,7 +339,7 @@ class cavityColumn(abstractLaserColumn):
         self.place_pid_box()
         self.place_voltage_box()
         self.place_daq_box()
-        # self.update_daq_channel()
+        self.update_daq_channel()
 
     def place_label(self):
         la = qt.QLabel("Cavity/HeNe")
@@ -383,7 +383,7 @@ class laserColumn(abstractLaserColumn):
         self.place_pid_box()
         self.place_voltage_box()
         self.place_daq_box()
-        # self.update_daq_channel()
+        self.update_daq_channel()
 
     def place_label(self):
         self.label_box = newBox(layout_type="hbox")
@@ -397,8 +397,6 @@ class laserColumn(abstractLaserColumn):
         self.label_le.textChanged[str].connect(lambda val, text="label": self.update_config_elem(text, val))
         self.label_box.frame.addWidget(self.label_le, alignment=PyQt5.QtCore.Qt.AlignLeft)
         self.frame.addWidget(self.label_box)
-
-        # self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
 
     def place_freq_widget(self):
         self.global_freq_la = qt.QLabel("0 MHz")
@@ -457,6 +455,72 @@ class laserColumn(abstractLaserColumn):
     def set_freq_source(self, source, val):
         if val:
             self.update_config_elem("freq source", source)
+
+class aoThread(PyQt5.QtCore.QThread):
+    signal = PyQt5.QtCore.pyqtSignal(dict)
+
+    def __init__(self, parent):
+        super().__init__()
+        self.parent = parent # laserColumn object
+        self.samp_rate = 40000
+        self.samp_num = round(self.parent.config["scan time"]/1000*self.samp_rate)
+
+        self.task = nidaqmx.Task()
+        self.task.ao_channels.add_ao_voltage_chan(self.parent.cavity.config["daq ao"], min_val=-5.0, max_val=5.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+        self.task.timing.cfg_samp_clk_timing(
+                                            rate = self.samp_rate,
+                                            # source = "/Dev1/ao/SampleClock", # same source from this channel
+                                            active_edge = nidaqmx.constants.Edge.RISING,
+                                            sample_mode = nidaqmx.constants.AcquisitionType.FINITE,
+                                            samps_per_chan = self.samp_num
+                                        )
+        self.task.triggers.start_trigger.retriggerable = False
+
+    def run(self):
+
+        ai_data = self.ai_task.read(number_of_samples_per_channel=self.samp_num, timeout=10.0)
+        self.ao_task.write(np.linspace(0, 5, self.samp_num), auto_start=True, timeout=10.0)
+        self.ai_task.wait_until_done(timeout=10.0)
+        self.signal.emit({"ai_data": ai_data})
+        self.ai_task.close()
+        self.ao_task.cloae()
+
+class aiThread(PyQt5.QtCore.QThread):
+    signal = PyQt5.QtCore.pyqtSignal(dict)
+
+    def __init__(self, parent):
+        super().__init__()
+        self.parent = parent # laserColumn object
+        self.samp_rate = 40000
+        self.samp_num = round(self.parent.config["scan time"]/1000*self.samp_rate)
+
+        self.task = nidaqmx.Task()
+        dev_name = re.search(r"Dev\d+", self.parent.cavity.config["daq ao"])[0] # sync ai to cavity ao
+        self.task.ai_channels.add_ai_voltage_chan(self.parent.cavity.config["daq ai"], min_val=-2.0, max_val=2.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+        for laser in self.parent.laser_list:
+            self.task.ai_channels.add_ai_voltage_chan(laser.config["daq ai"], min_val=-2.0, max_val=2.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+        self.task.timing.cfg_samp_clk_timing(
+                                                rate = self.samp_rate,
+                                                # source = "/"+dev_name+"/ao/SampleClock", # same source from this channel
+                                                active_edge = nidaqmx.constants.Edge.RISING,
+                                                sample_mode = nidaqmx.constants.AcquisitionType.FINITE,
+                                                samps_per_chan = self.samp_num
+                                            )
+        self.task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source="/"+dev_name+"/ao/StartTrigger", trigger_edge=nidaqmx.constants.Edge.RISING)
+        self.task.triggers.start_trigger.retriggerable = True
+        self.task.start()
+
+    def run(self):
+        while self.parent.active:
+            data = self.task.read(number_of_samples_per_channel=self.samp_num, timeout=10.0)
+            data = np.reshape(data, (len(data), -1))
+            self.task.wait_until_done(timeout=10.0)
+            data_dict = {}
+            data_dict["cavity"] = data[0]
+            for i in range(len(self.parent.laser_list)):
+                data_dict[f"laser{i}"] = data[i+1]
+            self.signal.emit(data_dict)
+        self.task.close()
 
 class mainWindow(qt.QMainWindow):
     def __init__(self, app):
@@ -685,14 +749,35 @@ class mainWindow(qt.QMainWindow):
             laser.update_daq_channel()
 
     def start(self):
-        pass
+        self.active = True
+        self.ai_thread = aiThread(self)
+        self.ai_thread.signal.connect(self.feedback)
+        self.ai_thread.start()
+
+        
+
+        self.start_pb.setText("Stop Lock")
+        self.start_pb.disconnect()
+        self.start_pb.clicked[bool].connect(self.stop)
+
+    @PyQt5.QtCore.pyqtSlot(dict)
+    def feedback(self, dict):
+        self.cavity.scan_curve.setData(dict["cavity"])
+        for i, laser in enumerate(self.laser_list):
+            laser.scan_curve.setData(dict[f"laser{i}"])
+
+    def stop(self):
+        self.active = False
+        self.start_pb.setText("Start Lock")
+        self.start_pb.disconnect()
+        self.start_pb.clicked[bool].connect(self.start)
 
 
 if __name__ == '__main__':
     app = qt.QApplication(sys.argv)
     # screen = app.screens()
     # monitor_dpi = screen[0].physicalDotsPerInch()
-    monitor_dpi = 183
+    monitor_dpi = 92
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
     prog = mainWindow(app)
     sys.exit(app.exec_())
