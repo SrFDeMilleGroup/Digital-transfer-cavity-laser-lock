@@ -323,7 +323,7 @@ class abstractLaserColumn(qt.QGroupBox):
         config["offset/V"] = str(self.config["offset"])
         config["limit/V"] = str(self.config["limit"])
         config["daq ai"] = self.config["daq ai"]
-        config["daq ao"] = self.config["daq ai"]
+        config["daq ao"] = self.config["daq ao"]
         config["wavenumber/cm-1"] = str(self.config["wavenumber"])
 
         return config
@@ -456,14 +456,63 @@ class laserColumn(abstractLaserColumn):
         if val:
             self.update_config_elem("freq source", source)
 
-class aoThread(PyQt5.QtCore.QThread):
-    signal = PyQt5.QtCore.pyqtSignal(dict)
-
+class laserAoThread(PyQt5.QtCore.QThread):
     def __init__(self, parent):
         super().__init__()
-        self.parent = parent # laserColumn object
-        self.samp_rate = 40000
+        self.parent = parent
+
+        self.task = nidaqmx.Task()
+        for laser in self.parent.laser_list:
+            self.task.ao_channels.add_ao_voltage_chan(laser.config["daq ao"], min_val=-5.0, max_val=5.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+
+    def run(self):
+        while self.parent.active:
+            if self.parent.update_laser_ao:
+                self.task.write(self.parent.laser_output_list, auto_start=True, timeout=10.0)
+                self.parent.update_laser_ao = False
+            time.sleep(0.005)
+        self.task.close()
+
+# class cavityAoThread(PyQt5.QtCore.QThread):
+#     def __init__(self, parent):
+#         super().__init__()
+#         self.parent = parent
+#         self.samp_rate = 400000
+#         self.samp_num = round(self.parent.config["scan time"]/1000*self.samp_rate)
+#         self.daq_output = np.linspace(self.parent.config["scan amp"], 0, self.samp_num)
+#         # print(self.daq_output)
+#
+#     def run(self):
+#         while self.parent.active:
+#             # if self.parent.update_cavity_ao:
+#             if True:
+#                 self.daq_init()
+#                 num = self.task.write(self.daq_output+self.parent.cavity_output, auto_start=True, timeout=10.0)
+#                 self.task.wait_until_done(timeout=10.0)
+#                 self.task.close()
+#                 # self.parent.update_cavity_ao = False
+#                 # print(num)
+#             # time.sleep(0.005)
+#
+#     def daq_init(self):
+#         self.task = nidaqmx.Task()
+#         self.task.ao_channels.add_ao_voltage_chan(self.parent.cavity.config["daq ao"], min_val=-5.0, max_val=5.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+#         self.task.timing.cfg_samp_clk_timing(
+#                                             rate = self.samp_rate,
+#                                             # source = "/Dev1/ao/SampleClock", # same source from this channel
+#                                             active_edge = nidaqmx.constants.Edge.RISING,
+#                                             sample_mode = nidaqmx.constants.AcquisitionType.FINITE,
+#                                             samps_per_chan = self.samp_num
+#                                         )
+#         self.task.triggers.start_trigger.retriggerable = False
+
+class cavityAoThread(PyQt5.QtCore.QThread):
+    def __init__(self, parent):
+        super().__init__()
+        self.parent = parent
+        self.samp_rate = 400000
         self.samp_num = round(self.parent.config["scan time"]/1000*self.samp_rate)
+        self.daq_output = np.linspace(self.parent.config["scan amp"], 0, self.samp_num)
 
         self.task = nidaqmx.Task()
         self.task.ao_channels.add_ao_voltage_chan(self.parent.cavity.config["daq ao"], min_val=-5.0, max_val=5.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
@@ -471,27 +520,24 @@ class aoThread(PyQt5.QtCore.QThread):
                                             rate = self.samp_rate,
                                             # source = "/Dev1/ao/SampleClock", # same source from this channel
                                             active_edge = nidaqmx.constants.Edge.RISING,
-                                            sample_mode = nidaqmx.constants.AcquisitionType.FINITE,
+                                            sample_mode = nidaqmx.constants.AcquisitionType.CONTINUOUS,
                                             samps_per_chan = self.samp_num
                                         )
-        self.task.triggers.start_trigger.retriggerable = False
 
     def run(self):
-
-        ai_data = self.ai_task.read(number_of_samples_per_channel=self.samp_num, timeout=10.0)
-        self.ao_task.write(np.linspace(0, 5, self.samp_num), auto_start=True, timeout=10.0)
-        self.ai_task.wait_until_done(timeout=10.0)
-        self.signal.emit({"ai_data": ai_data})
-        self.ai_task.close()
-        self.ao_task.cloae()
+        while self.parent.active:
+            if self.parent.update_cavity_ao:
+                num = self.task.write(self.daq_output+self.parent.cavity_output, auto_start=True, timeout=10.0)
+                self.task.wait_until_done(timeout=10.0)
+                self.parent.update_cavity_ao = False
 
 class aiThread(PyQt5.QtCore.QThread):
     signal = PyQt5.QtCore.pyqtSignal(dict)
 
     def __init__(self, parent):
         super().__init__()
-        self.parent = parent # laserColumn object
-        self.samp_rate = 40000
+        self.parent = parent
+        self.samp_rate = 400000
         self.samp_num = round(self.parent.config["scan time"]/1000*self.samp_rate)
 
         self.task = nidaqmx.Task()
@@ -501,20 +547,21 @@ class aiThread(PyQt5.QtCore.QThread):
             self.task.ai_channels.add_ai_voltage_chan(laser.config["daq ai"], min_val=-2.0, max_val=2.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
         self.task.timing.cfg_samp_clk_timing(
                                                 rate = self.samp_rate,
-                                                # source = "/"+dev_name+"/ao/SampleClock", # same source from this channel
+                                                source = "/"+dev_name+"/ao/SampleClock",
                                                 active_edge = nidaqmx.constants.Edge.RISING,
                                                 sample_mode = nidaqmx.constants.AcquisitionType.FINITE,
                                                 samps_per_chan = self.samp_num
                                             )
         self.task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source="/"+dev_name+"/ao/StartTrigger", trigger_edge=nidaqmx.constants.Edge.RISING)
+        # self.task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source="/Dev1/PFI1", trigger_edge=nidaqmx.constants.Edge.RISING)
         self.task.triggers.start_trigger.retriggerable = True
         self.task.start()
 
     def run(self):
         while self.parent.active:
             data = self.task.read(number_of_samples_per_channel=self.samp_num, timeout=10.0)
+            # self.task.wait_until_done(timeout=10.0)
             data = np.reshape(data, (len(data), -1))
-            self.task.wait_until_done(timeout=10.0)
             data_dict = {}
             data_dict["cavity"] = data[0]
             for i in range(len(self.parent.laser_list)):
@@ -530,6 +577,10 @@ class mainWindow(qt.QMainWindow):
         self.color_list = ["#800000", "#008080", "#000080"]
         self.config = {}
         self.active = False
+        self.update_cavity_ao = False
+        self.update_laser_ao = False
+        self.cavity_output = 0
+        self.laser_output_list = []
 
         self.box = newBox(layout_type="grid")
         self.box.frame.setRowStretch(0, 3)
@@ -749,16 +800,30 @@ class mainWindow(qt.QMainWindow):
             laser.update_daq_channel()
 
     def start(self):
+        self.cavity_output = self.cavity.config["offset"]
+        self.laser_output_list = []
+        for laser in self.laser_list:
+            self.laser_output_list.append(laser.config["offset"])
+
         self.active = True
         self.ai_thread = aiThread(self)
         self.ai_thread.signal.connect(self.feedback)
         self.ai_thread.start()
 
-        
+        # self.laser_ao_thread = laserAoThread(self)
+        # self.laser_ao_thread.start()
+
+        self.cavity_ao_thread = cavityAoThread(self)
+        self.cavity_ao_thread.start()
+
+        self.update_laser_ao = True
+        self.update_cavity_ao = True
 
         self.start_pb.setText("Stop Lock")
         self.start_pb.disconnect()
         self.start_pb.clicked[bool].connect(self.stop)
+
+        self.enable_widgets(False)
 
     @PyQt5.QtCore.pyqtSlot(dict)
     def feedback(self, dict):
@@ -766,11 +831,27 @@ class mainWindow(qt.QMainWindow):
         for i, laser in enumerate(self.laser_list):
             laser.scan_curve.setData(dict[f"laser{i}"])
 
+        # time.sleep(0.02)
+        # self.update_laser_ao = True
+        # self.update_cavity_ao = True
+
+        # find peaks
+        # pid algebra
+        # update self....
+
     def stop(self):
         self.active = False
+        self.update_laser_ao = False
+        self.update_cavity_ao = False
+
         self.start_pb.setText("Start Lock")
         self.start_pb.disconnect()
         self.start_pb.clicked[bool].connect(self.start)
+
+        self.enable_widgets(True)
+
+    def enable_widgets(self, enabled):
+        pass
 
 
 if __name__ == '__main__':
