@@ -463,7 +463,7 @@ class daqThread(PyQt5.QtCore.QThread):
         super().__init__()
         self.parent = parent
         self.counter = 0
-        self.samp_rate = 400000
+        self.samp_rate = 384000
         self.dt = 1.0/self.samp_rate
         self.samp_num = round(self.parent.config["scan time"]/1000*self.samp_rate)
         self.dev_name = re.search(r"Dev\d+", self.parent.cavity.config["daq ao"])[0] # sync ai to cavity ao
@@ -524,18 +524,21 @@ class daqThread(PyQt5.QtCore.QThread):
 
                 for i, laser in enumerate(self.parent.laser_list):
                     laser_peak, _ = signal.find_peaks(pd_data[i+1], height=laser.config["peak height"], width=laser.config["peak width"])
-                    # calculate laser error signal
-                    laser_err = laser.config["local freq"] - (laser_peak[0]-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
-                    # calculate laser feedback volatge
-                    laser_feedback = self.laser_last_feedback[i] + \
-                                     (laser_err-self.laser_last_err[i][1])*laser.config["kp"]*laser.config["kp multiplier"]*laser.config["kp on"] + \
-                                     laser_err*laser.config["ki"]*laser.config["ki multiplier"]*laser.config["ki on"]*self.parent.config["scan time"]/1000 + \
-                                     (laser_err+self.laser_last_err[i][0]-2*self.laser_last_err[i][1])*laser.config["kd"]*laser.config["kd multiplier"]*laser.config["kd on"]/(self.parent.config["scan time"]/1000)
-                    # coerce cavity feedbak voltage
-                    laser_feedback = np.clip(laser_feedback, self.laser_last_feedback[i]-self.parent.cavity.config["limit"], self.laser_last_feedback[i]+self.parent.cavity.config["limit"])
-                    self.laser_output[i] = laser.config["offset"] + laser_feedback
-                    self.laser_last_feedback[i] = laser_feedback
-                    self.laser_last_err[i].append(laser_err)
+                    if len(laser_peak) > 0:
+                        # calculate laser error signal
+                        laser_err = laser.config["local freq"] - (laser_peak[0]-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
+                        # calculate laser feedback volatge
+                        laser_feedback = self.laser_last_feedback[i] + \
+                                         (laser_err-self.laser_last_err[i][1])*laser.config["kp"]*laser.config["kp multiplier"]*laser.config["kp on"] + \
+                                         laser_err*laser.config["ki"]*laser.config["ki multiplier"]*laser.config["ki on"]*self.parent.config["scan time"]/1000 + \
+                                         (laser_err+self.laser_last_err[i][0]-2*self.laser_last_err[i][1])*laser.config["kd"]*laser.config["kd multiplier"]*laser.config["kd on"]/(self.parent.config["scan time"]/1000)
+                        # coerce cavity feedbak voltage
+                        laser_feedback = np.clip(laser_feedback, self.laser_last_feedback[i]-self.parent.cavity.config["limit"], self.laser_last_feedback[i]+self.parent.cavity.config["limit"])
+                        self.laser_output[i] = laser.config["offset"] + laser_feedback
+                        self.laser_last_feedback[i] = laser_feedback
+                        self.laser_last_err[i].append(laser_err)
+                    else:
+                        self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
 
             else:
                 cavity_first_peak = cavity_peaks[0]*self.dt*1000 if len(cavity_peaks)>0 else np.nan# in ms
@@ -545,10 +548,11 @@ class daqThread(PyQt5.QtCore.QThread):
                     self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
 
             self.laser_ao_task.write(self.laser_output)
-            self.cavity_ao_task.write(self.cavity_scan + self.cavity_output)
+            cavity_ao = self.cavity_scan + self.cavity_output
+            self.cavity_ao_task.write(cavity_ao)
             self.do_task.write([True, False])
 
-            if self.counter%5 == 0:
+            if self.counter%20 == 0:
                 data_dict = {}
                 data_dict["cavity pd_data"] = pd_data[0]
                 data_dict["cavity first peak"] = cavity_first_peak
