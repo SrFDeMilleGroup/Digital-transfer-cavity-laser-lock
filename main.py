@@ -14,7 +14,7 @@ import os
 import nidaqmx
 import qdarkstyle # see https://github.com/ColinDuquesnoy/QDarkStyleSheet
 import re
-from collection import deque
+from collections import deque
 
 def pt_to_px(pt):
     return round(pt*monitor_dpi/72)
@@ -349,10 +349,10 @@ class cavityColumn(abstractLaserColumn):
         # self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
 
     def place_freq_widget(self):
-        self.first_peak_la = qt.QLabel("0")
+        self.first_peak_la = qt.QLabel("0 ms")
         self.freq_box.frame.addRow("First peak:", self.first_peak_la)
 
-        self.peak_sep_la = qt.QLabel("0")
+        self.peak_sep_la = qt.QLabel("0 ms")
         self.freq_box.frame.addRow("Pk-pk sep.:", self.peak_sep_la)
 
         self.setpoint_dsb = newDoubleSpinBox(range=(-100, 100), decimal=2, stepsize=0.1, suffix=" ms")
@@ -463,6 +463,7 @@ class daqThread(PyQt5.QtCore.QThread):
     def __init__(self, parent):
         super().__init__()
         self.parent = parent
+        self.counter = 0
         self.samp_rate = 400000
         self.dt = 1.0/self.samp_rate
         self.samp_num = round(self.parent.config["scan time"]/1000*self.samp_rate)
@@ -487,7 +488,7 @@ class daqThread(PyQt5.QtCore.QThread):
         self.cavity_last_feedback = 0
 
     def run(self):
-        self.laser_ao_task.write(self.laser_output_list)
+        self.laser_ao_task.write(self.laser_output)
         self.cavity_ao_task.write(self.cavity_scan + self.parent.cavity.config["offset"])
 
         self.ai_task.start()
@@ -503,9 +504,10 @@ class daqThread(PyQt5.QtCore.QThread):
             # chop array?
 
             cavity_peaks, _ = signal.find_peaks(pd_data[0], height=self.parent.cavity.config["peak height"], width=self.parent.cavity.config["peak width"])
-            cavity_first_peak = cavity_peaks[0]*self.dt*1000 # in ms
-            cavity_pk_sep = (cavity_peaks[1] - cavity_peaks[0])*self.dt*1000 if len(cavity_peaks) == 2 else np.nan # in ms
+
             if len(cavity_peaks) == 2:
+                cavity_first_peak = cavity_peaks[0]*self.dt*1000 # in ms
+                cavity_pk_sep = (cavity_peaks[1] - cavity_peaks[0])*self.dt*1000 # in ms
                 # calculate cavity error signal
                 cavity_err = (self.parent.cavity.config["set point"] - cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"] # in MHz
                 # calculate cavity feedback volatge
@@ -531,10 +533,12 @@ class daqThread(PyQt5.QtCore.QThread):
                     # coerce cavity feedbak voltage
                     laser_feedback = np.clip(laser_feedback, self.laser_last_feedback-self.parent.cavity.config["limit"], self.laser_last_feedback+self.parent.cavity.config["limit"])
                     self.laser_output[i] = laser.config["offset"] + laser_feedback
-                    self.laser_laat_feeback[i] = laser_feedback
+                    self.laser_last_feeback[i] = laser_feedback
                     self.laser_last_err[i].append(laser_err)
 
             else:
+                cavity_first_peak = cavity_peaks[0]*self.dt*1000 if len(cavity_peaks)>0 else np.nan# in ms
+                cavity_pk_sep = np.nan
                 self.cavity_output = self.parent.cavity.config["offset"] + self.cavity_last_feedback
                 for i, laser in enumerate(self.parent.laser_list):
                     self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
@@ -543,21 +547,25 @@ class daqThread(PyQt5.QtCore.QThread):
             self.cavity_ao_task.write(self.cavity_scan + self.cavity_output)
             self.do_task.write([True, False])
 
-            data_dict = {}
-            data_dict["cavity pd_data"] = data[0]
-            data_dict["cavity first peak"] = cavity_first_peak
-            data_dict["cavity pk sep"] = cavity_pk_sep
-            data_dict["cavity error"] = self.cavity_last_err
-            data_dict["cavity output"] = self.cavity_output
-            data_dict["laser pd_data"] = data[1:]
-            data_dict["laser error"] = self.laser_last_err
-            data_dict["laser output"] = self.laser_last_output
-            self.signal.emit(data_dict)
+            if self.counter%5 == 0:
+                data_dict = {}
+                data_dict["cavity pd_data"] = pd_data[0]
+                data_dict["cavity first peak"] = cavity_first_peak
+                data_dict["cavity pk sep"] = cavity_pk_sep
+                data_dict["cavity error"] = self.cavity_last_err
+                data_dict["cavity output"] = self.cavity_output
+                data_dict["laser pd_data"] = pd_data[1:]
+                data_dict["laser error"] = self.laser_last_err
+                data_dict["laser output"] = self.laser_output
+                self.signal.emit(data_dict)
+
+            self.counter += 1
 
         self.ai_task.close()
         self.cavity_ao_task.close()
         self.laser_ao_task.close()
         self.do_task.close()
+        self.counter = 0
 
     def ai_task_init(self):
         self.ai_task = nidaqmx.Task()
@@ -613,10 +621,6 @@ class mainWindow(qt.QMainWindow):
         self.color_list = ["#800000", "#008080", "#000080"]
         self.config = {}
         self.active = False
-        self.update_cavity_ao = False
-        self.update_laser_ao = False
-        self.cavity_output = 0
-        self.laser_output_list = []
 
         self.box = newBox(layout_type="grid")
         self.box.frame.setRowStretch(0, 3)
@@ -847,14 +851,27 @@ class mainWindow(qt.QMainWindow):
 
         self.enable_widgets(False)
 
+        self.cavity_err_queue = deque([], maxlen=self.config["RMS length"])
+        self.laser_err_list = []
+        for laser in self.laser_list:
+            self.laser_err_list.append(deque([], maxlen=self.config["RMS length"]))
+
     @PyQt5.QtCore.pyqtSlot(dict)
     def feedback(self, dict):
         self.cavity.scan_curve.setData(dict["cavity pd_data"])
+        self.cavity.first_peak_la.setText("{:.2f} ms".format(dict["cavity first peak"]))
+        self.cavity.peak_sep_la.setText("{:.2f} ms".format(dict["cavity pk sep"]))
+        self.cavity.daq_output_la.setText("{:.3f} V".format(dict["cavity output"]))
+        self.cavity_err_queue.append(dict["cavity error"])
+        self.cavity.rms_width_la.setText("{:.2f} MHz".format(np.std(self.cavity_err_queue)))
+        self.cavity.err_curve.setData(np.array(self.cavity_err_queue))
         for i, laser in enumerate(self.laser_list):
             laser.scan_curve.setData(dict["laser pd_data"][i])
+            laser.daq_output_la.setText("{:.3f} V".format(dict["laser output"][i]))
+            self.laser_err_list[i].append(dict["laser error"][i])
+            laser.rms_width_la.setText("{:.2f} MHz".format(np.std(self.laser_err_list[i])))
+            laser.err_curve.setData(np.array(self.laser_err_list[i]))
 
-
-        # update self....
 
     def stop(self):
         self.active = False
