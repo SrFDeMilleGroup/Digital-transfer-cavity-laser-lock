@@ -1,5 +1,4 @@
 import sys
-import h5py
 import time
 import logging
 import traceback
@@ -637,7 +636,7 @@ class mainWindow(qt.QMainWindow):
         self.box.frame.addWidget(ctrl_box, 1, 0)
 
         self.setCentralWidget(self.box)
-        self.resize(pt_to_px(500), pt_to_px(500))
+        self.resize(pt_to_px(500), pt_to_px(700))
         self.show()
 
         cf = configparser.ConfigParser()
