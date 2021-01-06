@@ -465,7 +465,7 @@ class daqThread(PyQt5.QtCore.QThread):
         self.counter = 0
         self.samp_rate = 384000
         self.dt = 1.0/self.samp_rate
-        self.samp_num = round(self.parent.config["scan time"]/1000*self.samp_rate)
+        self.samp_num = round(self.parent.config["scan time"]/1000.0*self.samp_rate)
         self.dev_name = re.search(r"Dev\d+", self.parent.cavity.config["daq ao"])[0] # sync ai to cavity ao
 
         self.ai_task_init()
@@ -489,14 +489,14 @@ class daqThread(PyQt5.QtCore.QThread):
 
     def run(self):
         self.laser_ao_task.write(self.laser_output)
-        self.cavity_ao_task.write(self.cavity_scan + self.parent.cavity.config["offset"])
+        self.cavity_ao_task.write(self.cavity_scan + self.cavity_output)
 
         self.ai_task.start()
         self.cavity_ao_task.start()
         self.laser_ao_task.start()
         self.counter_task.start()
         self.do_task.start()
-        self.do_task.write([True, False])
+        self.do_task.write([False, True, False])
 
         while self.parent.active:
             pd_data = self.ai_task.read(number_of_samples_per_channel=self.samp_num, timeout=10.0)
@@ -541,18 +541,19 @@ class daqThread(PyQt5.QtCore.QThread):
                         self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
 
             else:
-                cavity_first_peak = cavity_peaks[0]*self.dt*1000 if len(cavity_peaks)>0 else np.nan# in ms
+                cavity_first_peak = cavity_peaks[0]*self.dt*1000 if len(cavity_peaks)>0 else np.nan # in ms
                 cavity_pk_sep = np.nan
                 self.cavity_output = self.parent.cavity.config["offset"] + self.cavity_last_feedback
                 for i, laser in enumerate(self.parent.laser_list):
                     self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
 
             self.laser_ao_task.write(self.laser_output)
-            cavity_ao = self.cavity_scan + self.cavity_output
-            self.cavity_ao_task.write(cavity_ao)
+            # time.sleep(0.005)
+            self.cavity_ao_task.write(self.cavity_scan + self.cavity_output)
+            print(self.cavity_ao_task.out_stream.curr_write_pos)
             self.do_task.write([True, False])
 
-            if self.counter%20 == 0:
+            if self.counter%10 == 0:
                 data_dict = {}
                 data_dict["cavity pd_data"] = pd_data[0]
                 data_dict["cavity first peak"] = cavity_first_peak
@@ -569,36 +570,46 @@ class daqThread(PyQt5.QtCore.QThread):
         self.ai_task.close()
         self.cavity_ao_task.close()
         self.laser_ao_task.close()
+        self.counter_task.close()
         self.do_task.close()
         self.counter = 0
 
     def ai_task_init(self):
         self.ai_task = nidaqmx.Task()
-        self.ai_task.ai_channels.add_ai_voltage_chan(self.parent.cavity.config["daq ai"], min_val=-2.0, max_val=5.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+        self.ai_task.ai_channels.add_ai_voltage_chan(self.parent.cavity.config["daq ai"], min_val=-0.5, max_val=1.2, units=nidaqmx.constants.VoltageUnits.VOLTS)
         for laser in self.parent.laser_list:
-            self.ai_task.ai_channels.add_ai_voltage_chan(laser.config["daq ai"], min_val=-2.0, max_val=5.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+            self.ai_task.ai_channels.add_ai_voltage_chan(laser.config["daq ai"], min_val=-0.5, max_val=1.2, units=nidaqmx.constants.VoltageUnits.VOLTS)
         self.ai_task.timing.cfg_samp_clk_timing(
                                                 rate = self.samp_rate,
+                                                # rate = 100000,
                                                 source = self.parent.config["counter PFI line"],
                                                 active_edge = nidaqmx.constants.Edge.RISING,
                                                 sample_mode = nidaqmx.constants.AcquisitionType.CONTINUOUS,
                                                 samps_per_chan = self.samp_num
                                             )
+        # self.ai_task.in_stream.relative_to = nidaqmx.constants.WriteRelativeTo.FIRST_SAMPLE
         # self.ai_task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source="/"+self.dev_name+"/PFI1", trigger_edge=nidaqmx.constants.Edge.RISING)
         # self.ai_task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source="/Dev1/PFI1", trigger_edge=nidaqmx.constants.Edge.RISING)
         # self.ai_task.triggers.start_trigger.retriggerable = True
 
     def cavity_ao_task_init(self):
         self.cavity_ao_task = nidaqmx.Task()
-        self.cavity_ao_task.ao_channels.add_ao_voltage_chan(self.parent.cavity.config["daq ao"], min_val=-5.0, max_val=5.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+        cavity_ao_ch = self.cavity_ao_task.ao_channels.add_ao_voltage_chan(self.parent.cavity.config["daq ao"], min_val=-5.0, max_val=10.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+        # to avoid error200018
+        # https://forums.ni.com/t5/Multifunction-DAQ/poor-analog-output-performance-error-200018/td-p/1525156?profile.language=en
+        cavity_ao_ch.ao_data_xfer_mech = nidaqmx.constants.DataTransferActiveTransferMode.DMA
+        cavity_ao_ch.ao_data_xfer_req_cond = nidaqmx.constants.OutputDataTransferCondition.ON_BOARD_MEMORY_LESS_THAN_FULL
         self.cavity_ao_task.timing.cfg_samp_clk_timing(
                                             rate = self.samp_rate,
+                                            # rate = 1000,
                                             source = self.parent.config["counter PFI line"],
                                             active_edge = nidaqmx.constants.Edge.RISING,
                                             sample_mode = nidaqmx.constants.AcquisitionType.CONTINUOUS,
                                             samps_per_chan = self.samp_num
                                         )
-        # self.cavity_ao_task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source="/"+self.dev_name+"/PFI1", trigger_edge=nidaqmx.constants.Edge.RISING)
+        # self.cavity_ao_task.out_stream.relative_to = nidaqmx.constants.WriteRelativeTo.FIRST_SAMPLE
+        # self.cavity_ao_task.out_stream.offset = 0
+        # self.cavity_ao_task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source="/"+self.dev_name+"/ai/StartTrigger", trigger_edge=nidaqmx.constants.Edge.RISING)
         # self.cavity_ao_task.triggers.start_trigger.retriggerable = True
         self.cavity_ao_task.out_stream.regen_mode = nidaqmx.constants.RegenerationMode.DONT_ALLOW_REGENERATION
         # self.cavity_ao_task.out_stream.regen_mode = nidaqmx.constants.RegenerationMode.ALLOW_REGENERATION
@@ -606,7 +617,7 @@ class daqThread(PyQt5.QtCore.QThread):
     def laser_ao_task_init(self):
         self.laser_ao_task = nidaqmx.Task()
         for laser in self.parent.laser_list:
-            self.laser_ao_task.ao_channels.add_ao_voltage_chan(laser.config["daq ao"], min_val=-5.0, max_val=5.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+            self.laser_ao_task.ao_channels.add_ao_voltage_chan(laser.config["daq ao"], min_val=-5.0, max_val=9.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
         # no sample clock timing or trigger is specified, this task is running in "on demand" mode.
 
     def do_task_init(self):
@@ -653,7 +664,7 @@ class mainWindow(qt.QMainWindow):
 
         cf = configparser.ConfigParser()
         cf.optionxform = str # make config key name case sensitive
-        cf.read("defaults.ini")
+        cf.read("saved_settings\Rb_cavity_lock_setting.ini")
 
         self.update_config(cf)
         self.update_widgets()
