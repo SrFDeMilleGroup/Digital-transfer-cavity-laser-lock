@@ -213,7 +213,7 @@ class abstractLaserColumn(qt.QGroupBox):
         voltage_box = newBox(layout_type="form")
         self.frame.addWidget(voltage_box)
 
-        self.offset_dsb = newDoubleSpinBox(range=(-10, 10), decimal=2, stepsize=0.1, suffix=" V")
+        self.offset_dsb = newDoubleSpinBox(range=(-10, 10), decimal=2, stepsize=0.01, suffix=" V")
         self.offset_dsb.valueChanged[float].connect(lambda val, text="offset": self.update_config_elem(text, val))
         voltage_box.frame.addRow("Offset:", self.offset_dsb)
 
@@ -227,7 +227,8 @@ class abstractLaserColumn(qt.QGroupBox):
         self.rms_width_la = qt.QLabel("0 MHz")
         voltage_box.frame.addRow("RMS width:", self.rms_width_la)
 
-        self.locked_la = qt.QLabel()
+        self.locked_la = qt.QLabel(" "*6)
+        self.locked_la.setStyleSheet("QLabel{background: #304249}")
         voltage_box.frame.addRow("Locked:", self.locked_la)
 
         self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
@@ -567,10 +568,10 @@ class daqThread(PyQt5.QtCore.QThread):
                 data_dict["cavity pd_data"] = pd_data[0]
                 data_dict["cavity first peak"] = cavity_first_peak
                 data_dict["cavity pk sep"] = cavity_pk_sep
-                data_dict["cavity error"] = self.cavity_last_err
+                data_dict["cavity error"] = self.cavity_last_err[1]
                 data_dict["cavity output"] = self.cavity_output
                 data_dict["laser pd_data"] = pd_data[1:, :]
-                data_dict["laser error"] = self.laser_last_err
+                data_dict["laser error"] = np.array(self.laser_last_err)[:, 1]
                 data_dict["laser output"] = self.laser_output
                 self.signal.emit(data_dict)
 
@@ -617,7 +618,7 @@ class daqThread(PyQt5.QtCore.QThread):
                                         )
         # self.cavity_ao_task.out_stream.relative_to = nidaqmx.constants.WriteRelativeTo.FIRST_SAMPLE
         # self.cavity_ao_task.out_stream.offset = 0
-        # self.cavity_ao_task.out_stream.output_buf_size = self.samp_num
+        self.cavity_ao_task.out_stream.output_buf_size = self.samp_num
         self.cavity_ao_task.out_stream.regen_mode = nidaqmx.constants.RegenerationMode.DONT_ALLOW_REGENERATION
         # self.cavity_ao_task.out_stream.regen_mode = nidaqmx.constants.RegenerationMode.ALLOW_REGENERATION
 
@@ -662,6 +663,7 @@ class mainWindow(qt.QMainWindow):
         self.box.frame.addWidget(self.scan_plot, 0, 0)
 
         self.err_plot = newPlot(self)
+        self.err_plot.setLabel("left", "freq. error (MHz)", **fontstyle)
         self.box.frame.addWidget(self.err_plot, 2, 0)
 
         ctrl_box = self.place_controls()
@@ -789,9 +791,9 @@ class mainWindow(qt.QMainWindow):
         control_box.frame.addWidget(self.laser_box)
 
         self.cavity = cavityColumn(self)
-        self.cavity.scan_curve = self.scan_plot.plot(np.linspace(0, 100, 100)*4)
+        self.cavity.scan_curve = self.scan_plot.plot()
         self.cavity.scan_curve.setPen('w')
-        self.cavity.err_curve = self.err_plot.plot(np.linspace(0, 100, 100)*4)
+        self.cavity.err_curve = self.err_plot.plot()
         self.cavity.err_curve.setPen('w')
         self.laser_box.frame.addWidget(self.cavity)
         self.laser_list = []
@@ -801,9 +803,9 @@ class mainWindow(qt.QMainWindow):
     def update_lasers(self, num_lasers):
         while num_lasers > len(self.laser_list):
             laser = laserColumn(self)
-            laser.scan_curve = self.scan_plot.plot(np.linspace(0, 100, 100)*len(self.laser_list))
+            laser.scan_curve = self.scan_plot.plot()
             laser.scan_curve.setPen(self.color_list[len(self.laser_list)%3])
-            laser.err_curve = self.err_plot.plot(np.linspace(0, 100, 100)*len(self.laser_list))
+            laser.err_curve = self.err_plot.plot()
             laser.err_curve.setPen(self.color_list[len(self.laser_list)%3])
             laser.label_box.setStyleSheet("QGroupBox{background: "+self.color_list[len(self.laser_list)%3]+"}")
             self.laser_list.append(laser)
@@ -948,7 +950,9 @@ class mainWindow(qt.QMainWindow):
 
         self.cavity_err_queue = deque([], maxlen=self.config["RMS length"])
         self.laser_err_list = []
+        self.cavity.locked = False
         for laser in self.laser_list:
+            laser.locked = False
             self.laser_err_list.append(deque([], maxlen=self.config["RMS length"]))
 
     @PyQt5.QtCore.pyqtSlot(dict)
@@ -959,13 +963,33 @@ class mainWindow(qt.QMainWindow):
         self.cavity.peak_sep_la.setText("{:.2f} ms".format(dict["cavity pk sep"]))
         self.cavity.daq_output_la.setText("{:.3f} V".format(dict["cavity output"]))
         self.cavity_err_queue.append(dict["cavity error"])
-        self.cavity.rms_width_la.setText("{:.2f} MHz".format(np.std(self.cavity_err_queue)))
+        rms = np.std(self.cavity_err_queue)
+        self.cavity.rms_width_la.setText("{:.2f} MHz".format(rms))
+        if rms < self.config["lock criteria"] and np.abs(dict["cavity error"]) < self.config["lock criteria"]:
+            if not self.cavity.locked:
+                self.cavity.locked = True
+                self.cavity.locked_la.setStyleSheet("QLabel{background: green}")
+        else:
+            if self.cavity.locked:
+                self.cavity.locked = False
+                self.cavity.locked_la.setStyleSheet("QLabel{background: #304249}")
         self.cavity.err_curve.setData(np.array(self.cavity_err_queue))
+
         for i, laser in enumerate(self.laser_list):
             laser.scan_curve.setData(np.linspace(self.config["scan ignore"], self.config["scan time"], data_len), dict["laser pd_data"][i])
             laser.daq_output_la.setText("{:.3f} V".format(dict["laser output"][i]))
             self.laser_err_list[i].append(dict["laser error"][i])
-            laser.rms_width_la.setText("{:.2f} MHz".format(np.std(self.laser_err_list[i])))
+            laser.actual_freq_la.setText("{:.1f} MHz".format(laser.config["local freq"]+dict["laser error"][i]))
+            rms = np.std(self.laser_err_list[i])
+            laser.rms_width_la.setText("{:.2f} MHz".format(rms))
+            if rms < self.config["lock criteria"] and dict["laser error"][i] < self.config["lock criteria"]:
+                if not laser.locked:
+                    laser.locked = True
+                    laser.locked_la.setStyleSheet("QLabel{background: green}")
+            else:
+                if laser.locked:
+                    laser.locked = False
+                    laser.locked_la.setStyleSheet("QLabel{background: #304249}")
             laser.err_curve.setData(np.array(self.laser_err_list[i]))
 
     def stop(self):
@@ -986,6 +1010,8 @@ class mainWindow(qt.QMainWindow):
         self.counter_cb.setEnabled(enabled)
         self.counter_pfi_cb.setEnabled(enabled)
         self.trigger_cb.setEnabled(enabled)
+
+        self.refresh_daq_pb.setEnabled(enabled)
 
         self.cavity.daq_in_cb.setEnabled(enabled)
         self.cavity.daq_out_cb.setEnabled(enabled)
