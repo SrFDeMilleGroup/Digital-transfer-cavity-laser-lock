@@ -120,7 +120,6 @@ class newPlot(pg.PlotWidget):
     def __init__(self, parent):
         super().__init__()
         tickstyle = {"showValues": False}
-        fontstyle = {"color": "#919191", "font-size": "11pt"}
 
         self.showGrid(True, True)
         self.setLabel("top")
@@ -128,7 +127,6 @@ class newPlot(pg.PlotWidget):
         self.setLabel("right")
         self.getAxis("right").setStyle(**tickstyle)
 
-        self.setLabel("bottom", "time", **fontstyle)
         self.getAxis("bottom").enableAutoSIPrefix(False)
 
 class abstractLaserColumn(qt.QGroupBox):
@@ -256,15 +254,22 @@ class abstractLaserColumn(qt.QGroupBox):
         daq_box.frame.addRow("Wave #:", self.wavenum_dsb)
 
     def update_daq_channel(self):
+        in_ch = self.daq_in_cb.currentText()
+        self.daq_in_cb.clear()
         dev_collect = nidaqmx.system._collections.device_collection.DeviceCollection()
         for i in dev_collect.device_names:
             ch_collect = nidaqmx.system._collections.physical_channel_collection.AIPhysicalChannelCollection(i)
             for j in ch_collect.channel_names:
                 self.daq_in_cb.addItem(j)
+        self.daq_in_cb.setCurrentText(in_ch)
+
+        out_ch = self.daq_out_cb.currentText()
+        self.daq_out_cb.clear()
         for i in dev_collect.device_names:
             ch_collect = nidaqmx.system._collections.physical_channel_collection.AOPhysicalChannelCollection(i)
             for j in ch_collect.channel_names:
                 self.daq_out_cb.addItem(j)
+        self.daq_out_cb.setCurrentText(out_ch)
 
     def update_config_elem(self, text, val):
         self.config[text] = val
@@ -354,7 +359,7 @@ class cavityColumn(abstractLaserColumn):
         self.peak_sep_la = qt.QLabel("0 ms")
         self.freq_box.frame.addRow("Pk-pk sep.:", self.peak_sep_la)
 
-        self.setpoint_dsb = newDoubleSpinBox(range=(-100, 100), decimal=2, stepsize=0.1, suffix=" ms")
+        self.setpoint_dsb = newDoubleSpinBox(range=(0, 100), decimal=2, stepsize=0.1, suffix=" ms")
         self.setpoint_dsb.valueChanged[float].connect(lambda val, text="setpoint": self.update_config_elem(text, val))
         self.freq_box.frame.addRow("Set point:", self.setpoint_dsb)
 
@@ -463,10 +468,9 @@ class daqThread(PyQt5.QtCore.QThread):
         super().__init__()
         self.parent = parent
         self.counter = 0
-        self.samp_rate = 384000
+        self.samp_rate = self.parent.config["sampling rate"]
         self.dt = 1.0/self.samp_rate
         self.samp_num = round(self.parent.config["scan time"]/1000.0*self.samp_rate)
-        self.dev_name = re.search(r"Dev\d+", self.parent.cavity.config["daq ao"])[0] # sync ai to cavity ao
 
         self.ai_task_init()
         self.cavity_ao_task_init()
@@ -474,6 +478,7 @@ class daqThread(PyQt5.QtCore.QThread):
         self.counter_task_init()
         self.do_task_init()
 
+    def run(self):
         self.laser_output = []
         self.laser_last_err = []
         self.laser_last_feedback = []
@@ -487,7 +492,6 @@ class daqThread(PyQt5.QtCore.QThread):
         self.cavity_last_err = deque([0, 0], maxlen=2)
         self.cavity_last_feedback = 0
 
-    def run(self):
         self.laser_ao_task.write(self.laser_output)
         self.cavity_ao_task.write(self.cavity_scan + self.cavity_output)
 
@@ -502,7 +506,9 @@ class daqThread(PyQt5.QtCore.QThread):
             pd_data = self.ai_task.read(number_of_samples_per_channel=self.samp_num, timeout=10.0)
             pd_data = np.reshape(pd_data, (len(pd_data), -1)) # force it to be a 2D array
 
-            # chop array?
+            # chop array
+            start_length = round(self.parent.config["scan ignore"]/1000*self.samp_rate)
+            pd_data = pd_data[:, start_length:]
 
             cavity_peaks, _ = signal.find_peaks(pd_data[0], height=self.parent.cavity.config["peak height"], width=self.parent.cavity.config["peak width"])
 
@@ -510,7 +516,7 @@ class daqThread(PyQt5.QtCore.QThread):
                 cavity_first_peak = cavity_peaks[0]*self.dt*1000 # in ms
                 cavity_pk_sep = (cavity_peaks[1] - cavity_peaks[0])*self.dt*1000 # in ms
                 # calculate cavity error signal
-                cavity_err = (self.parent.cavity.config["set point"] - cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"] # in MHz
+                cavity_err = (self.parent.cavity.config["set point"] - self.parent.config["scan ignore"] - cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"] # in MHz
                 # calculate cavity feedback volatge
                 cavity_feedback = self.cavity_last_feedback + \
                                   (cavity_err-self.cavity_last_err[1])*self.parent.cavity.config["kp"]*self.parent.cavity.config["kp multiplier"]*self.parent.cavity.config["kp on"] + \
@@ -526,7 +532,7 @@ class daqThread(PyQt5.QtCore.QThread):
                     laser_peak, _ = signal.find_peaks(pd_data[i+1], height=laser.config["peak height"], width=laser.config["peak width"])
                     if len(laser_peak) > 0:
                         # calculate laser error signal
-                        laser_err = laser.config["local freq"] - (laser_peak[0]-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
+                        laser_err = laser.config["local freq"] - (laser_peak[0]*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
                         # calculate laser feedback volatge
                         laser_feedback = self.laser_last_feedback[i] + \
                                          (laser_err-self.laser_last_err[i][1])*laser.config["kp"]*laser.config["kp multiplier"]*laser.config["kp on"] + \
@@ -549,18 +555,21 @@ class daqThread(PyQt5.QtCore.QThread):
 
             self.laser_ao_task.write(self.laser_output)
             # time.sleep(0.005)
+            self.cavity_scan = np.linspace(self.parent.config["scan amp"], 0, self.samp_num)
             self.cavity_ao_task.write(self.cavity_scan + self.cavity_output)
-            print(self.cavity_ao_task.out_stream.curr_write_pos)
+            # print(self.cavity_ao_task.out_stream.curr_write_pos)
+            # print(self.cavity_ao_task.out_stream.curr_write_pos-self.cavity_ao_task.out_stream.total_samp_per_chan_generated)
+
             self.do_task.write([True, False])
 
-            if self.counter%10 == 0:
+            if self.counter%self.parent.config["display per"] == 0:
                 data_dict = {}
                 data_dict["cavity pd_data"] = pd_data[0]
                 data_dict["cavity first peak"] = cavity_first_peak
                 data_dict["cavity pk sep"] = cavity_pk_sep
                 data_dict["cavity error"] = self.cavity_last_err
                 data_dict["cavity output"] = self.cavity_output
-                data_dict["laser pd_data"] = pd_data[1:]
+                data_dict["laser pd_data"] = pd_data[1:, :]
                 data_dict["laser error"] = self.laser_last_err
                 data_dict["laser output"] = self.laser_output
                 self.signal.emit(data_dict)
@@ -575,7 +584,7 @@ class daqThread(PyQt5.QtCore.QThread):
         self.counter = 0
 
     def ai_task_init(self):
-        self.ai_task = nidaqmx.Task()
+        self.ai_task = nidaqmx.Task("ai task")
         self.ai_task.ai_channels.add_ai_voltage_chan(self.parent.cavity.config["daq ai"], min_val=-0.5, max_val=1.2, units=nidaqmx.constants.VoltageUnits.VOLTS)
         for laser in self.parent.laser_list:
             self.ai_task.ai_channels.add_ai_voltage_chan(laser.config["daq ai"], min_val=-0.5, max_val=1.2, units=nidaqmx.constants.VoltageUnits.VOLTS)
@@ -588,12 +597,11 @@ class daqThread(PyQt5.QtCore.QThread):
                                                 samps_per_chan = self.samp_num
                                             )
         # self.ai_task.in_stream.relative_to = nidaqmx.constants.WriteRelativeTo.FIRST_SAMPLE
-        # self.ai_task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source="/"+self.dev_name+"/PFI1", trigger_edge=nidaqmx.constants.Edge.RISING)
         # self.ai_task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source="/Dev1/PFI1", trigger_edge=nidaqmx.constants.Edge.RISING)
         # self.ai_task.triggers.start_trigger.retriggerable = True
 
     def cavity_ao_task_init(self):
-        self.cavity_ao_task = nidaqmx.Task()
+        self.cavity_ao_task = nidaqmx.Task("cavity ao task")
         cavity_ao_ch = self.cavity_ao_task.ao_channels.add_ao_voltage_chan(self.parent.cavity.config["daq ao"], min_val=-5.0, max_val=10.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
         # to avoid error200018
         # https://forums.ni.com/t5/Multifunction-DAQ/poor-analog-output-performance-error-200018/td-p/1525156?profile.language=en
@@ -609,30 +617,29 @@ class daqThread(PyQt5.QtCore.QThread):
                                         )
         # self.cavity_ao_task.out_stream.relative_to = nidaqmx.constants.WriteRelativeTo.FIRST_SAMPLE
         # self.cavity_ao_task.out_stream.offset = 0
-        # self.cavity_ao_task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source="/"+self.dev_name+"/ai/StartTrigger", trigger_edge=nidaqmx.constants.Edge.RISING)
-        # self.cavity_ao_task.triggers.start_trigger.retriggerable = True
+        # self.cavity_ao_task.out_stream.output_buf_size = self.samp_num
         self.cavity_ao_task.out_stream.regen_mode = nidaqmx.constants.RegenerationMode.DONT_ALLOW_REGENERATION
         # self.cavity_ao_task.out_stream.regen_mode = nidaqmx.constants.RegenerationMode.ALLOW_REGENERATION
 
     def laser_ao_task_init(self):
-        self.laser_ao_task = nidaqmx.Task()
+        self.laser_ao_task = nidaqmx.Task("laser ao task")
         for laser in self.parent.laser_list:
             self.laser_ao_task.ao_channels.add_ao_voltage_chan(laser.config["daq ao"], min_val=-5.0, max_val=9.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
         # no sample clock timing or trigger is specified, this task is running in "on demand" mode.
 
     def do_task_init(self):
-        self.do_task = nidaqmx.Task()
-        self.do_task.do_channels.add_do_chan(self.parent.config["trigger"])
+        self.do_task = nidaqmx.Task("do task")
+        self.do_task.do_channels.add_do_chan(self.parent.config["trigger channel"])
 
     def counter_task_init(self):
-        self.counter_task = nidaqmx.Task()
+        self.counter_task = nidaqmx.Task("counter task")
         self.counter_task.co_channels.add_co_pulse_chan_freq(
-                                                            counter=self.parent.config["counter"],
+                                                            counter=self.parent.config["counter channel"],
                                                             units=nidaqmx.constants.FrequencyUnits.HZ,
                                                             freq=self.samp_rate,
                                                             duty_cycle=0.5)
         self.counter_task.timing.cfg_implicit_timing(sample_mode=nidaqmx.constants.AcquisitionType.FINITE, samps_per_chan=self.samp_num)
-        self.counter_task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source=self.parent.config["trigger"], trigger_edge=nidaqmx.constants.Edge.RISING)
+        self.counter_task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source=self.parent.config["trigger channel"], trigger_edge=nidaqmx.constants.Edge.RISING)
         self.counter_task.triggers.start_trigger.retriggerable = True
 
 class mainWindow(qt.QMainWindow):
@@ -650,6 +657,8 @@ class mainWindow(qt.QMainWindow):
         self.box.frame.setRowStretch(2, 3)
 
         self.scan_plot = newPlot(self)
+        fontstyle = {"color": "#919191", "font-size": "11pt"}
+        self.scan_plot.setLabel("bottom", "time (ms)", **fontstyle)
         self.box.frame.addWidget(self.scan_plot, 0, 0)
 
         self.err_plot = newPlot(self)
@@ -666,6 +675,7 @@ class mainWindow(qt.QMainWindow):
         cf.optionxform = str # make config key name case sensitive
         cf.read("saved_settings\Rb_cavity_lock_setting.ini")
 
+        self.update_daq_channel()
         self.update_config(cf)
         self.update_widgets()
 
@@ -683,33 +693,76 @@ class mainWindow(qt.QMainWindow):
         start_box.frame.addWidget(self.toggle_pb)
 
         self.scan_box = newBox(layout_type="grid")
+        self.scan_box.setMaximumWidth(pt_to_px(520))
         self.scan_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
         control_box.frame.addWidget(self.scan_box)
 
         self.scan_box.frame.addWidget(qt.QLabel("Scan amp:"), 0, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
         self.scan_amp_dsb = newDoubleSpinBox(range=(0, 10), decimal=2, stepsize=0.1, suffix=" V")
+        self.scan_amp_dsb.valueChanged[float].connect(lambda val, text="scan amp": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.scan_amp_dsb, 0, 1)
 
         self.scan_box.frame.addWidget(qt.QLabel("Scan time:"), 0, 2, alignment = PyQt5.QtCore.Qt.AlignRight)
         self.scan_time_dsb = newDoubleSpinBox(range=(0, 100), decimal=1, stepsize=0.1, suffix=" ms")
+        self.scan_time_dsb.valueChanged[float].connect(lambda val, text="scan time": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.scan_time_dsb, 0, 3)
 
         self.scan_box.frame.addWidget(qt.QLabel("Scan ignore:"), 0, 4, alignment = PyQt5.QtCore.Qt.AlignRight)
         self.scan_ignore_dsb = newDoubleSpinBox(range=(0, 100), decimal=2, stepsize=0.1, suffix=" ms")
+        self.scan_ignore_dsb.valueChanged[float].connect(lambda val, text="scan ignore": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.scan_ignore_dsb, 0, 5)
+
+        self.scan_box.frame.addWidget(qt.QLabel("Sample rate:"), 0, 6, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.samp_rate_sb = qt.QSpinBox()
+        self.samp_rate_sb.setRange(0, 1000000)
+        self.samp_rate_sb.setSuffix(" S/s")
+        self.samp_rate_sb.valueChanged[int].connect(lambda val, text="sampling rate": self.update_config_elem(text, val))
+        self.scan_box.frame.addWidget(self.samp_rate_sb, 0, 7)
 
         self.scan_box.frame.addWidget(qt.QLabel("Cavity FSR:"), 1, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
         self.cavity_fsr_dsb = newDoubleSpinBox(range=(0, 10000), decimal=1, stepsize=1, suffix=" MHz")
+        self.cavity_fsr_dsb.valueChanged[float].connect(lambda val, text="cavity FSR": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.cavity_fsr_dsb, 1, 1)
 
         self.scan_box.frame.addWidget(qt.QLabel("Lock Criteria:"), 1, 2, alignment = PyQt5.QtCore.Qt.AlignRight)
         self.lock_criteria_dsb = newDoubleSpinBox(range=(0, 100), decimal=1, stepsize=1, suffix=" MHz")
+        self.lock_criteria_dsb.valueChanged[float].connect(lambda val, text="lock criteria": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.lock_criteria_dsb, 1, 3)
 
         self.scan_box.frame.addWidget(qt.QLabel("RMS Length:"), 1, 4, alignment = PyQt5.QtCore.Qt.AlignRight)
         self.rms_length_sb = qt.QSpinBox()
         self.rms_length_sb.setRange(0, 10000)
+        self.rms_length_sb.valueChanged[int].connect(lambda val, text="RMS length": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.rms_length_sb, 1, 5)
+
+        self.scan_box.frame.addWidget(qt.QLabel("Display per:"), 1, 6, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.disp_rate_sb = qt.QSpinBox()
+        self.disp_rate_sb.setRange(5, 10000)
+        self.disp_rate_sb.setSuffix(" Cycles")
+        self.disp_rate_sb.valueChanged[int].connect(lambda val, text="display per": self.update_config_elem(text, val))
+        self.scan_box.frame.addWidget(self.disp_rate_sb, 1, 7)
+
+        self.scan_box.frame.addWidget(qt.QLabel("Counter ch:"), 2, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.counter_cb = qt.QComboBox()
+        self.counter_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
+        self.counter_cb.currentTextChanged[str].connect(lambda val, text="counter channel": self.update_config_elem(text, val))
+        self.scan_box.frame.addWidget(self.counter_cb, 2, 1, 1, 2)
+
+        self.scan_box.frame.addWidget(qt.QLabel("Counter PFI:"), 2, 4, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.counter_pfi_cb = qt.QComboBox()
+        self.counter_pfi_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
+        self.counter_pfi_cb.currentTextChanged[str].connect(lambda val, text="counter PFI line": self.update_config_elem(text, val))
+        self.scan_box.frame.addWidget(self.counter_pfi_cb, 2, 5, 1, 2)
+
+        self.scan_box.frame.addWidget(qt.QLabel("Trigger ch:"), 3, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.trigger_cb = qt.QComboBox()
+        self.trigger_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
+        self.trigger_cb.currentTextChanged[str].connect(lambda val, text="trigger channel": self.update_config_elem(text, val))
+        self.scan_box.frame.addWidget(self.trigger_cb, 3, 1, 1, 2)
+
+        self.refresh_daq_pb = qt.QPushButton("Refresh DAQ channels")
+        self.refresh_daq_pb.clicked[bool].connect(lambda val: self.refresh_all_daq_ch())
+        self.scan_box.frame.addWidget(self.refresh_daq_pb, 3, 4, 1, 3)
 
         self.file_box = newBox(layout_type="hbox")
         self.file_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
@@ -731,10 +784,6 @@ class mainWindow(qt.QMainWindow):
         self.load_setting_pb = qt.QPushButton("Load setting")
         self.load_setting_pb.clicked[bool].connect(lambda val: self.load_setting())
         self.file_box.frame.addWidget(self.load_setting_pb)
-
-        self.refresh_daq_pb = qt.QPushButton("Refresh DAQ channel")
-        self.refresh_daq_pb.clicked[bool].connect(lambda val: self.refreh_daq_ch())
-        self.file_box.frame.addWidget(self.refresh_daq_pb)
 
         self.laser_box = newBox(layout_type="hbox")
         control_box.frame.addWidget(self.laser_box)
@@ -771,13 +820,15 @@ class mainWindow(qt.QMainWindow):
         self.config["scan amp"] = config["Setting"].getfloat("scan amp/V")
         self.config["scan time"] = config["Setting"].getfloat("scan time/ms")
         self.config["scan ignore"] = config["Setting"].getfloat("scan ignore/ms")
+        self.config["sampling rate"] = config["Setting"].getint("sampling rate")
         self.config["cavity FSR"] = config["Setting"].getfloat("cavity FSR/MHz")
         self.config["lock criteria"] = config["Setting"].getfloat("lock criteria/MHz")
         self.config["RMS length"] = config["Setting"].getint("RMS length")
-        self.config["num of lasers"] = config["Setting"].getint("num of lasers")
-        self.config["counter"] = config["Setting"].get("counter")
+        self.config["display per"] = config["Setting"].getint("display per")
+        self.config["counter channel"] = config["Setting"].get("counter channel")
         self.config["counter PFI line"] = config["Setting"].get("counter PFI line")
-        self.config["trigger"] = config["Setting"].get("trigger")
+        self.config["trigger channel"] = config["Setting"].get("trigger channel")
+        self.config["num of lasers"] = config["Setting"].getint("num of lasers")
 
         self.update_lasers(self.config["num of lasers"])
         self.cavity.update_config(config["Cavity"])
@@ -788,13 +839,31 @@ class mainWindow(qt.QMainWindow):
         self.scan_amp_dsb.setValue(self.config["scan amp"])
         self.scan_time_dsb.setValue(self.config["scan time"])
         self.scan_ignore_dsb.setValue(self.config["scan ignore"])
+        self.samp_rate_sb.setValue(self.config["sampling rate"])
         self.cavity_fsr_dsb.setValue(self.config["cavity FSR"])
         self.lock_criteria_dsb.setValue(self.config["lock criteria"])
         self.rms_length_sb.setValue(self.config["RMS length"])
+        self.disp_rate_sb.setValue(self.config["display per"])
+
+        self.counter_cb.setCurrentText(self.config["counter channel"])
+        self.config["counter channel"] = self.counter_cb.currentText()
+        self.counter_pfi_cb.setCurrentText(self.config["counter PFI line"])
+        self.config["counter PFI line"] = self.counter_pfi_cb.currentText()
+        self.trigger_cb.setCurrentText(self.config["trigger channel"])
+        self.config["trigger channel"] = self.trigger_cb.currentText()
 
         self.cavity.update_widgets()
         for laser in self.laser_list:
             laser.update_widgets()
+
+    def update_config_elem(self, text, val):
+        self.config[text] = val
+
+        if text == "scan time":
+            self.scan_ignore_dsb.setMaximum(val)
+
+        if text == "scan ignore":
+            self.cavity.setpoint_dsb.setMinimum(val)
 
     def load_setting(self):
         # open a file dialog to choose a configuration file to load
@@ -859,7 +928,8 @@ class mainWindow(qt.QMainWindow):
         else:
             self.file_box.show()
 
-    def refreh_daq_ch(self):
+    def refresh_all_daq_ch(self):
+        self.update_daq_channel()
         self.cavity.update_daq_channel()
         for laser in self.laser_list:
             laser.update_daq_channel()
@@ -883,20 +953,20 @@ class mainWindow(qt.QMainWindow):
 
     @PyQt5.QtCore.pyqtSlot(dict)
     def feedback(self, dict):
-        self.cavity.scan_curve.setData(dict["cavity pd_data"])
-        self.cavity.first_peak_la.setText("{:.2f} ms".format(dict["cavity first peak"]))
+        data_len = len(dict["cavity pd_data"])
+        self.cavity.scan_curve.setData(np.linspace(self.config["scan ignore"], self.config["scan time"], data_len), dict["cavity pd_data"])
+        self.cavity.first_peak_la.setText("{:.2f} ms".format(self.config["scan ignore"]+dict["cavity first peak"]))
         self.cavity.peak_sep_la.setText("{:.2f} ms".format(dict["cavity pk sep"]))
         self.cavity.daq_output_la.setText("{:.3f} V".format(dict["cavity output"]))
         self.cavity_err_queue.append(dict["cavity error"])
         self.cavity.rms_width_la.setText("{:.2f} MHz".format(np.std(self.cavity_err_queue)))
         self.cavity.err_curve.setData(np.array(self.cavity_err_queue))
         for i, laser in enumerate(self.laser_list):
-            laser.scan_curve.setData(dict["laser pd_data"][i])
+            laser.scan_curve.setData(np.linspace(self.config["scan ignore"], self.config["scan time"], data_len), dict["laser pd_data"][i])
             laser.daq_output_la.setText("{:.3f} V".format(dict["laser output"][i]))
             self.laser_err_list[i].append(dict["laser error"][i])
             laser.rms_width_la.setText("{:.2f} MHz".format(np.std(self.laser_err_list[i])))
             laser.err_curve.setData(np.array(self.laser_err_list[i]))
-
 
     def stop(self):
         self.active = False
@@ -908,7 +978,44 @@ class mainWindow(qt.QMainWindow):
         self.enable_widgets(True)
 
     def enable_widgets(self, enabled):
-        pass
+        self.scan_time_dsb.setEnabled(enabled)
+        self.samp_rate_sb.setEnabled(enabled)
+
+        self.rms_length_sb.setEnabled(enabled) # deque max length can't be changed
+
+        self.counter_cb.setEnabled(enabled)
+        self.counter_pfi_cb.setEnabled(enabled)
+        self.trigger_cb.setEnabled(enabled)
+
+        self.cavity.daq_in_cb.setEnabled(enabled)
+        self.cavity.daq_out_cb.setEnabled(enabled)
+
+        for laser in self.laser_list:
+            laser.daq_in_cb.setEnabled(enabled)
+            laser.daq_out_cb.setEnabled(enabled)
+
+    def update_daq_channel(self):
+        counter_ch = self.counter_cb.currentText()
+        self.counter_cb.clear()
+        dev_collect = nidaqmx.system._collections.device_collection.DeviceCollection()
+        for i in dev_collect.device_names:
+            ch_collect = nidaqmx.system._collections.physical_channel_collection.COPhysicalChannelCollection(i)
+            for j in ch_collect.channel_names:
+                self.counter_cb.addItem(j)
+        self.counter_cb.setCurrentText(counter_ch)
+
+        counter_pfi = self.counter_pfi_cb.currentText()
+        self.counter_pfi_cb.clear()
+        trigger_ch = self.trigger_cb.currentText()
+        self.trigger_cb.clear()
+        for i in dev_collect.device_names:
+            dev = nidaqmx.system.device.Device(i)
+            for j in dev.terminals:
+                if "PFI" in j:
+                    self.counter_pfi_cb.addItem(j)
+                    self.trigger_cb.addItem(j)
+        self.counter_pfi_cb.setCurrentText(counter_pfi)
+        self.trigger_cb.setCurrentText(trigger_ch)
 
 
 if __name__ == '__main__':
