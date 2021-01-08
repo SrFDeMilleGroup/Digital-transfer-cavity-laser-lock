@@ -557,11 +557,16 @@ class daqThread(PyQt5.QtCore.QThread):
             self.laser_ao_task.write(self.laser_output)
             # time.sleep(0.005)
             self.cavity_scan = np.linspace(self.parent.config["scan amp"], 0, self.samp_num)
-            self.cavity_ao_task.write(self.cavity_scan + self.cavity_output)
+            self.cavity_ao_task.write(self.cavity_scan + self.cavity_output, auto_start=True)
             # print(self.cavity_ao_task.out_stream.curr_write_pos)
             # print(self.cavity_ao_task.out_stream.curr_write_pos-self.cavity_ao_task.out_stream.total_samp_per_chan_generated)
-
+            # time.sleep(0.005)
+            # print(f"before generation: {self.cavity_ao_task.out_stream.space_avail}")
             self.do_task.write([True, False])
+            # print(f"after generation: {self.cavity_ao_task.out_stream.space_avail}")
+
+            if self.counter%100 == 0:
+                self.cavity_ao_task.control(nidaqmx.constants.TaskMode.TASK_UNRESERVE)
 
             if self.counter%self.parent.config["display per"] == 0:
                 data_dict = {}
@@ -574,6 +579,7 @@ class daqThread(PyQt5.QtCore.QThread):
                 data_dict["laser error"] = np.array(self.laser_last_err)[:, 1]
                 data_dict["laser output"] = self.laser_output
                 self.signal.emit(data_dict)
+
 
             self.counter += 1
 
@@ -618,7 +624,7 @@ class daqThread(PyQt5.QtCore.QThread):
                                         )
         # self.cavity_ao_task.out_stream.relative_to = nidaqmx.constants.WriteRelativeTo.FIRST_SAMPLE
         # self.cavity_ao_task.out_stream.offset = 0
-        self.cavity_ao_task.out_stream.output_buf_size = self.samp_num
+        # self.cavity_ao_task.out_stream.output_onbrd_buf_size = 8191
         self.cavity_ao_task.out_stream.regen_mode = nidaqmx.constants.RegenerationMode.DONT_ALLOW_REGENERATION
         # self.cavity_ao_task.out_stream.regen_mode = nidaqmx.constants.RegenerationMode.ALLOW_REGENERATION
 
@@ -680,6 +686,8 @@ class mainWindow(qt.QMainWindow):
         self.update_daq_channel()
         self.update_config(cf)
         self.update_widgets()
+
+        self.scan_plot.setRange(yRange=(0, self.cavity.config["peak height"]*2.6))
 
     def place_controls(self):
         control_box = scrollArea(layout_type="vbox", scroll_type="both")
@@ -1051,4 +1059,6 @@ if __name__ == '__main__':
     monitor_dpi = 96
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
     prog = mainWindow(app)
-    sys.exit(app.exec_())
+    app.exec_()
+    prog.active = False
+    sys.exit()
