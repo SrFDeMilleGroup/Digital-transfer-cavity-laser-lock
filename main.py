@@ -469,6 +469,7 @@ class daqThread(PyQt5.QtCore.QThread):
         super().__init__()
         self.parent = parent
         self.counter = 0
+        self.err_counter = 1
         self.samp_rate = self.parent.config["sampling rate"]
         self.dt = 1.0/self.samp_rate
         self.samp_num = round(self.parent.config["scan time"]/1000.0*self.samp_rate)
@@ -523,10 +524,15 @@ class daqThread(PyQt5.QtCore.QThread):
                                   (cavity_err-self.cavity_last_err[1])*self.parent.cavity.config["kp"]*self.parent.cavity.config["kp multiplier"]*self.parent.cavity.config["kp on"] + \
                                   cavity_err*self.parent.cavity.config["ki"]*self.parent.cavity.config["ki multiplier"]*self.parent.cavity.config["ki on"]*self.parent.config["scan time"]/1000 + \
                                   (cavity_err+self.cavity_last_err[0]-2*self.cavity_last_err[1])*self.parent.cavity.config["kd"]*self.parent.cavity.config["kd multiplier"]*self.parent.cavity.config["kd on"]/(self.parent.config["scan time"]/1000)
-                # coerce cavity feedbak voltage
+                # coerce cavity feedbak voltage to avoid big jump
                 cavity_feedback = np.clip(cavity_feedback, self.cavity_last_feedback-self.parent.cavity.config["limit"], self.cavity_last_feedback+self.parent.cavity.config["limit"])
-                self.cavity_output = self.parent.cavity.config["offset"] + cavity_feedback
-                self.cavity_last_feedback = cavity_feedback
+                # check if cavity feedback voltage is NaN
+                if not np.isnan(cavity_feedback):
+                    self.cavity_last_feedback = cavity_feedback
+                    self.cavity_output = self.parent.cavity.config["offset"] + cavity_feedback
+                else:
+                    print("cavity feedback voltage is NaN.")
+                    self.cavity_output = self.parent.cavity.config["offset"] + self.cavity_last_feedback
                 self.cavity_last_err.append(cavity_err)
 
                 for i, laser in enumerate(self.parent.laser_list):
@@ -541,9 +547,15 @@ class daqThread(PyQt5.QtCore.QThread):
                                          (laser_err+self.laser_last_err[i][0]-2*self.laser_last_err[i][1])*laser.config["kd"]*laser.config["kd multiplier"]*laser.config["kd on"]/(self.parent.config["scan time"]/1000)
                         # coerce cavity feedbak voltage
                         laser_feedback = np.clip(laser_feedback, self.laser_last_feedback[i]-self.parent.cavity.config["limit"], self.laser_last_feedback[i]+self.parent.cavity.config["limit"])
-                        self.laser_output[i] = laser.config["offset"] + laser_feedback
-                        self.laser_last_feedback[i] = laser_feedback
+                        # check if laser feedback voltage is NaN
+                        if not np.isnan(laser_feedback):
+                            self.laser_last_feedback[i] = laser_feedback
+                            self.laser_output[i] = laser.config["offset"] + laser_feedback
+                        else:
+                            print(f"laser {i} feedback voltage is NaN.")
+                            self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
                         self.laser_last_err[i].append(laser_err)
+
                     else:
                         self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
 
@@ -555,18 +567,24 @@ class daqThread(PyQt5.QtCore.QThread):
                     self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
 
             self.laser_ao_task.write(self.laser_output)
-            # time.sleep(0.005)
-            self.cavity_scan = np.linspace(self.parent.config["scan amp"], 0, self.samp_num)
-            self.cavity_ao_task.write(self.cavity_scan + self.cavity_output, auto_start=True)
-            # print(self.cavity_ao_task.out_stream.curr_write_pos)
-            # print(self.cavity_ao_task.out_stream.curr_write_pos-self.cavity_ao_task.out_stream.total_samp_per_chan_generated)
-            # time.sleep(0.005)
-            # print(f"before generation: {self.cavity_ao_task.out_stream.space_avail}")
-            self.do_task.write([True, False])
-            # print(f"after generation: {self.cavity_ao_task.out_stream.space_avail}")
 
-            if self.counter%100 == 0:
-                self.cavity_ao_task.control(nidaqmx.constants.TaskMode.TASK_UNRESERVE)
+            try:
+                self.cavity_ao_task.write(self.cavity_scan + self.cavity_output)
+            except nidaqmx.errors.DaqError as err:
+                # This is to handle error -50410, which occurs randomly.
+                # "There was no space in buffer when new data was written.
+                # The oldest unread data in the buffer was lost as a result"
+
+                # The only way I know now to avoid this error is to release buffer in EVERY cycle,
+                # by calling "self.cavity_ao_task.control(nidaqmx.constants.TaskMode.TASK_UNRESERVE)"
+                # and then write to buffer "self.cavity_ao_task.write(self.cavity_scan + self.cavity_output, auto_start=True)".
+                # But this way reduces performance.
+                print(f"This is the {self.err_counter}-th time error occurs. \n{err}")
+                self.cavity_ao_task.control(nidaqmx.constants.TaskMode.TASK_ABORT)
+                self.cavity_ao_task.write(self.cavity_scan + self.cavity_output, auto_start=True)
+                self.err_counter += 1
+
+            self.do_task.write([True, False])
 
             if self.counter%self.parent.config["display per"] == 0:
                 data_dict = {}
@@ -603,9 +621,6 @@ class daqThread(PyQt5.QtCore.QThread):
                                                 sample_mode = nidaqmx.constants.AcquisitionType.CONTINUOUS,
                                                 samps_per_chan = self.samp_num
                                             )
-        # self.ai_task.in_stream.relative_to = nidaqmx.constants.WriteRelativeTo.FIRST_SAMPLE
-        # self.ai_task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source="/Dev1/PFI1", trigger_edge=nidaqmx.constants.Edge.RISING)
-        # self.ai_task.triggers.start_trigger.retriggerable = True
 
     def cavity_ao_task_init(self):
         self.cavity_ao_task = nidaqmx.Task("cavity ao task")
@@ -622,9 +637,6 @@ class daqThread(PyQt5.QtCore.QThread):
                                             sample_mode = nidaqmx.constants.AcquisitionType.CONTINUOUS,
                                             samps_per_chan = self.samp_num
                                         )
-        # self.cavity_ao_task.out_stream.relative_to = nidaqmx.constants.WriteRelativeTo.FIRST_SAMPLE
-        # self.cavity_ao_task.out_stream.offset = 0
-        # self.cavity_ao_task.out_stream.output_onbrd_buf_size = 8191
         self.cavity_ao_task.out_stream.regen_mode = nidaqmx.constants.RegenerationMode.DONT_ALLOW_REGENERATION
         # self.cavity_ao_task.out_stream.regen_mode = nidaqmx.constants.RegenerationMode.ALLOW_REGENERATION
 
@@ -725,6 +737,7 @@ class mainWindow(qt.QMainWindow):
         self.scan_box.frame.addWidget(qt.QLabel("Sample rate:"), 0, 6, alignment = PyQt5.QtCore.Qt.AlignRight)
         self.samp_rate_sb = qt.QSpinBox()
         self.samp_rate_sb.setRange(0, 1000000)
+        self.samp_rate_sb.setSingleStep(1000)
         self.samp_rate_sb.setSuffix(" S/s")
         self.samp_rate_sb.valueChanged[int].connect(lambda val, text="sampling rate": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.samp_rate_sb, 0, 7)
@@ -1010,6 +1023,7 @@ class mainWindow(qt.QMainWindow):
         self.enable_widgets(True)
 
     def enable_widgets(self, enabled):
+        self.scan_amp_dsb.setEnabled(enabled)
         self.scan_time_dsb.setEnabled(enabled)
         self.samp_rate_sb.setEnabled(enabled)
 
