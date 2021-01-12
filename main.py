@@ -14,6 +14,9 @@ import nidaqmx
 import qdarkstyle # see https://github.com/ColinDuquesnoy/QDarkStyleSheet
 import re
 from collections import deque
+import socket
+import selectors
+import struct
 
 def pt_to_px(pt):
     return round(pt*monitor_dpi/72)
@@ -337,6 +340,7 @@ class abstractLaserColumn(qt.QGroupBox):
 class cavityColumn(abstractLaserColumn):
     def __init__(self, parent):
         super().__init__(parent)
+        self.config["global freq"] = 0
 
         self.place_label()
         self.place_peak_box()
@@ -539,7 +543,8 @@ class daqThread(PyQt5.QtCore.QThread):
                     laser_peak, _ = signal.find_peaks(pd_data[i+1], height=laser.config["peak height"], width=laser.config["peak width"])
                     if len(laser_peak) > 0:
                         # calculate laser error signal
-                        laser_err = laser.config["local freq"] - (laser_peak[0]*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
+                        freq_setpoint = laser.config["local freq"] if laser.config["freq source"] == "local" else laser.config["global freq"]
+                        laser_err = freq_setpoint - (laser_peak[0]*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
                         # calculate laser feedback volatge
                         laser_feedback = self.laser_last_feedback[i] + \
                                          (laser_err-self.laser_last_err[i][1])*laser.config["kp"]*laser.config["kp multiplier"]*laser.config["kp on"] + \
@@ -661,6 +666,75 @@ class daqThread(PyQt5.QtCore.QThread):
         self.counter_task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source=self.parent.config["trigger channel"], trigger_edge=nidaqmx.constants.Edge.RISING)
         self.counter_task.triggers.start_trigger.retriggerable = True
 
+# this is a great tutorial: https://realpython.com/python-sockets/#application-client-and-server
+# and its corresponding github repository: https://github.com/realpython/materials/tree/master/python-sockets-tutorial
+# part of my code is adapted from here.
+class tcpThread(PyQt5.QtCore.QThread):
+    signal = PyQt5.QtCore.pyqtSignal(dict)
+
+    def __init__(self, parent):
+        super().__init__()
+        self.parent = parent
+        self.data = bytes()
+        self.host = self.parent.config["host address"]
+        self.port = self.parent.config["port"]
+        self.sel = selectors.DefaultSelector()
+
+        self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # Avoid bind() exception: OSError: [Errno 48] Address already in use
+        self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_sock.bind((self.host, self.port))
+        self.server_sock.listen()
+        print("listening on", (self.host, self.port))
+        self.server_sock.setblocking(False)
+        self.sel.register(self.server_sock, selectors.EVENT_READ, data=None)
+
+    def run(self):
+        while self.parent.tcp_active:
+            events = self.sel.select(timeout=0.1)
+            for key, mask in events:
+                if key.data is None:
+                    self.accept_wrapper(key.fileobj)
+                else:
+                    s = key.fileobj
+                    try:
+                        data = s.recv(1024) # 1024 bytes should be enough for our data
+                    except Exception as err:
+                        print(f"TCP connection error: \n{err}")
+                        continue
+                    if data:
+                        self.data += data
+                        while len(self.data) >= 10:
+                            try:
+                                laser_num = struct.unpack('>H', self.data[0:2])[0]
+                                laser_freq = struct.unpack('>d', self.data[2:10])[0]
+                                self.parent.laser_list[laser_num].config["global freq"] = laser_freq
+                                print(f"laser {laser_num}: freq = {laser_freq}")
+                                self.signal.emit({"type": "data", "laser": laser_num, "freq": laser_freq})
+                                s.sendall(self.data[:10])
+                            except Exception as err:
+                                print(f"TCP Thread error: \n{err}")
+                            finally:
+                                self.data = self.data[10:]
+                    else:
+                        # empty data will be interpreted as the signal of client shutting down
+                        print("client shutting down...")
+                        self.sel.unregister(s)
+                        s.close()
+                        self.signal.emit({"type": "close connection"})
+
+        self.sel.close()
+
+    def accept_wrapper(self, sock):
+        conn, addr = sock.accept()  # Should be ready to read
+        print("accepted connection from", addr)
+        conn.setblocking(False)
+        self.sel.register(conn, selectors.EVENT_READ, data=123) # In this application, 'data' keyword can be anything but None
+        return_dict = {}
+        return_dict["type"] = "open connection"
+        return_dict["client addr"] = addr
+        self.signal.emit(return_dict)
+
 class mainWindow(qt.QMainWindow):
     def __init__(self, app):
         super().__init__()
@@ -693,7 +767,7 @@ class mainWindow(qt.QMainWindow):
 
         cf = configparser.ConfigParser()
         cf.optionxform = str # make config key name case sensitive
-        cf.read("saved_settings\Rb_cavity_lock_setting.ini")
+        cf.read("saved_settings\PCIe-6351.ini")
 
         self.update_daq_channel()
         self.update_config(cf)
@@ -704,15 +778,25 @@ class mainWindow(qt.QMainWindow):
     def place_controls(self):
         control_box = scrollArea(layout_type="vbox", scroll_type="both")
 
-        start_box = newBox(layout_type="hbox")
+        start_box = newBox(layout_type="grid")
         control_box.frame.addWidget(start_box)
+        start_box.frame.setColumnStretch(0, 5)
+        start_box.frame.setColumnStretch(1, 5)
+        start_box.frame.setColumnStretch(2, 3)
 
         self.start_pb = qt.QPushButton("Start Lock")
         self.start_pb.clicked[bool].connect(lambda val:self.start())
-        start_box.frame.addWidget(self.start_pb)
+        start_box.frame.addWidget(self.start_pb, 0, 0)
+
         self.toggle_pb = qt.QPushButton("Toggle more control")
         self.toggle_pb.clicked[bool].connect(lambda val: self.toggle_more_ctrl())
-        start_box.frame.addWidget(self.toggle_pb)
+        start_box.frame.addWidget(self.toggle_pb, 0, 1)
+
+        self.tcp_la = qt.QLabel("Client PC NOT connected")
+        self.tcp_la.setAlignment(PyQt5.QtCore.Qt.AlignHCenter | PyQt5.QtCore.Qt.AlignVCenter)
+        self.tcp_la.setFixedWidth(pt_to_px(100))
+        self.tcp_la.setStyleSheet("QLabel{background: #304249;}")
+        start_box.frame.addWidget(self.tcp_la, 0, 2, alignment = PyQt5.QtCore.Qt.AlignHCenter)
 
         self.scan_box = newBox(layout_type="grid")
         self.scan_box.setMaximumWidth(pt_to_px(520))
@@ -808,6 +892,18 @@ class mainWindow(qt.QMainWindow):
         self.load_setting_pb.clicked[bool].connect(lambda val: self.load_setting())
         self.file_box.frame.addWidget(self.load_setting_pb)
 
+        self.tcp_box = newBox(layout_type="hbox")
+        self.tcp_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
+        control_box.frame.addWidget(self.tcp_box)
+
+        self.tcp_box.frame.addWidget(qt.QLabel("Server (this PC) address:"), alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.server_addr_la = qt.QLabel("")
+        self.tcp_box.frame.addWidget(self.server_addr_la, alignment = PyQt5.QtCore.Qt.AlignLeft)
+
+        self.tcp_box.frame.addWidget(qt.QLabel("Client address:"), alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.client_addr_la = qt.QLabel("No connection")
+        self.tcp_box.frame.addWidget(self.client_addr_la, alignment = PyQt5.QtCore.Qt.AlignLeft)
+
         self.laser_box = newBox(layout_type="hbox")
         control_box.frame.addWidget(self.laser_box)
 
@@ -839,6 +935,11 @@ class mainWindow(qt.QMainWindow):
             del self.laser_list[-1]
 
     def update_config(self, config):
+        self.tcp_active = True
+        try:
+            self.tcp_thread.join()
+        except AttributeError:
+            pass
 
         self.config["scan amp"] = config["Setting"].getfloat("scan amp/V")
         self.config["scan time"] = config["Setting"].getfloat("scan time/ms")
@@ -851,12 +952,19 @@ class mainWindow(qt.QMainWindow):
         self.config["counter channel"] = config["Setting"].get("counter channel")
         self.config["counter PFI line"] = config["Setting"].get("counter PFI line")
         self.config["trigger channel"] = config["Setting"].get("trigger channel")
+        self.config["host address"] = config["Setting"].get("host address")
+        self.config["port"] = config["Setting"].getint("port")
         self.config["num of lasers"] = config["Setting"].getint("num of lasers")
 
         self.update_lasers(self.config["num of lasers"])
         self.cavity.update_config(config["Cavity"])
         for i, laser in enumerate(self.laser_list):
             laser.update_config(config[f"Laser{i}"])
+
+        self.tcp_active = True
+        self.tcp_thread = tcpThread(self)
+        self.tcp_thread.signal.connect(self.update_tcp_widget)
+        self.tcp_thread.start()
 
     def update_widgets(self):
         self.scan_amp_dsb.setValue(self.config["scan amp"])
@@ -874,6 +982,8 @@ class mainWindow(qt.QMainWindow):
         self.config["counter PFI line"] = self.counter_pfi_cb.currentText()
         self.trigger_cb.setCurrentText(self.config["trigger channel"])
         self.config["trigger channel"] = self.trigger_cb.currentText()
+
+        self.server_addr_la.setText(self.config["host address"]+" ("+str(self.config["port"])+")")
 
         self.cavity.update_widgets()
         for laser in self.laser_list:
@@ -941,15 +1051,11 @@ class mainWindow(qt.QMainWindow):
         configfile.close()
 
     def toggle_more_ctrl(self):
-        if self.scan_box.isVisible():
-            self.scan_box.hide()
-        else:
-            self.scan_box.show()
-
-        if self.file_box.isVisible():
-            self.file_box.hide()
-        else:
-            self.file_box.show()
+        for i in [self.scan_box, self.file_box, self.tcp_box]:
+            if i.isVisible():
+                i.hide()
+            else:
+                i.show()
 
     def refresh_all_daq_ch(self):
         self.update_daq_channel()
@@ -1035,6 +1141,8 @@ class mainWindow(qt.QMainWindow):
 
         self.refresh_daq_pb.setEnabled(enabled)
 
+        self.load_setting_pb.setEnabled(enabled)
+
         self.cavity.daq_in_cb.setEnabled(enabled)
         self.cavity.daq_out_cb.setEnabled(enabled)
 
@@ -1065,6 +1173,22 @@ class mainWindow(qt.QMainWindow):
         self.counter_pfi_cb.setCurrentText(counter_pfi)
         self.trigger_cb.setCurrentText(trigger_ch)
 
+    @PyQt5.QtCore.pyqtSlot(dict)
+    def update_tcp_widget(self, dict):
+        if dict["type"] == "open connection":
+            addr = dict["client addr"]
+            self.client_addr_la.setText(addr[0]+" ("+str(addr[1])+")")
+            self.tcp_la.setText("Client PC connected!")
+            self.tcp_la.setStyleSheet("QLabel{background: green}")
+        elif dict["type"] == "close connection":
+            self.client_addr_la.setText("No connection")
+            self.tcp_la.setText("Client PC NOT connected")
+            self.tcp_la.setStyleSheet("QLabel{background: #304249;}")
+        elif dict["type"] == "data":
+            self.laser_list[dict["laser"]].global_freq_la.setText("{:.1f} MHz".format(dict["freq"]))
+        else:
+            print("TCP thread return dict type not supported")
+
 
 if __name__ == '__main__':
     app = qt.QApplication(sys.argv)
@@ -1075,4 +1199,5 @@ if __name__ == '__main__':
     prog = mainWindow(app)
     app.exec_()
     prog.active = False
+    prog.tcp_active = False
     sys.exit()
