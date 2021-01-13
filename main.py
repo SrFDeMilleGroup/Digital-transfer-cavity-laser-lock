@@ -767,7 +767,7 @@ class mainWindow(qt.QMainWindow):
 
         cf = configparser.ConfigParser()
         cf.optionxform = str # make config key name case sensitive
-        cf.read("saved_settings\PCIe-6351.ini")
+        cf.read("saved_settings\Rb_cavity_lock_setting.ini")
 
         self.update_daq_channel()
         self.update_config(cf)
@@ -1106,7 +1106,8 @@ class mainWindow(qt.QMainWindow):
             laser.scan_curve.setData(np.linspace(self.config["scan ignore"], self.config["scan time"], data_len), dict["laser pd_data"][i])
             laser.daq_output_la.setText("{:.3f} V".format(dict["laser output"][i]))
             self.laser_err_list[i].append(dict["laser error"][i])
-            laser.actual_freq_la.setText("{:.1f} MHz".format(laser.config["local freq"]+dict["laser error"][i]))
+            freq_setpoint = laser.config["local freq"] if laser.config["freq source"] == "local" else laser.config["global freq"]
+            laser.actual_freq_la.setText("{:.1f} MHz".format(freq_setpoint+dict["laser error"][i]))
             rms = np.std(self.laser_err_list[i])
             laser.rms_width_la.setText("{:.2f} MHz".format(rms))
             if rms < self.config["lock criteria"] and dict["laser error"][i] < self.config["lock criteria"]:
