@@ -120,6 +120,25 @@ class newDoubleSpinBox(qt.QDoubleSpinBox):
             # if the event is ignored, it will be passed to and handled by parent widget
             event.ignore()
 
+# modify SpinBox for the same reason as modifying DoubleSpinBox, see comments for newDoubleSpinBox class
+class newSpinBox(qt.QSpinBox):
+    def __init__(self, range=None, stepsize=None, suffix=None):
+        super().__init__()
+        self.setFocusPolicy(PyQt5.QtCore.Qt.StrongFocus)
+
+        if range != None:
+            self.setRange(range[0], range[1])
+        if stepsize != None:
+            self.setSingleStep(stepsize)
+        if suffix != None:
+            self.setSuffix(suffix)
+
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
 # modify ComboBox for the same reason as modifying DoubleSpinBox, see comments for newDoubleSpinBox class
 class newComboBox(qt.QComboBox):
     def __init__(self):
@@ -172,9 +191,7 @@ class abstractLaserColumn(qt.QGroupBox):
         self.peak_height_dsb.valueChanged[float].connect(lambda val, text="peak height": self.update_config_elem(text, val))
         peak_box.frame.addRow("Peak height:", self.peak_height_dsb)
 
-        self.peak_width_sb = qt.QSpinBox()
-        self.peak_width_sb.setRange(0, 1000)
-        self.peak_width_sb.setSuffix(" pts")
+        self.peak_width_sb = newSpinBox(range=(0, 1000), stepsize=1, suffix=" pt")
         self.peak_width_sb.valueChanged[int].connect(lambda val, text="peak width": self.update_config_elem(text, val))
         peak_box.frame.addRow("Peak width:", self.peak_width_sb)
 
@@ -929,10 +946,7 @@ class mainWindow(qt.QMainWindow):
         self.scan_box.frame.addWidget(self.scan_ignore_dsb, 0, 5)
 
         self.scan_box.frame.addWidget(qt.QLabel("Sample rate:"), 0, 6, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.samp_rate_sb = qt.QSpinBox()
-        self.samp_rate_sb.setRange(0, 1000000)
-        self.samp_rate_sb.setSingleStep(1000)
-        self.samp_rate_sb.setSuffix(" S/s")
+        self.samp_rate_sb = newSpinBox(range=(0, 1000000), stepsize=1000, suffix=" S/s")
         self.samp_rate_sb.valueChanged[int].connect(lambda val, text="sampling rate": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.samp_rate_sb, 0, 7)
 
@@ -947,32 +961,29 @@ class mainWindow(qt.QMainWindow):
         self.scan_box.frame.addWidget(self.lock_criteria_dsb, 1, 3)
 
         self.scan_box.frame.addWidget(qt.QLabel("RMS Length:"), 1, 4, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.rms_length_sb = qt.QSpinBox()
-        self.rms_length_sb.setRange(0, 10000)
+        self.rms_length_sb = newSpinBox(range=(0, 10000), stepsize=1, suffix=None)
         self.rms_length_sb.valueChanged[int].connect(lambda val, text="RMS length": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.rms_length_sb, 1, 5)
 
         self.scan_box.frame.addWidget(qt.QLabel("Display per:"), 1, 6, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.disp_rate_sb = qt.QSpinBox()
-        self.disp_rate_sb.setRange(5, 10000)
-        self.disp_rate_sb.setSuffix(" Cycles")
+        self.disp_rate_sb = newSpinBox(range=(5, 10000), stepsize=1, suffix=" Cycles")
         self.disp_rate_sb.valueChanged[int].connect(lambda val, text="display per": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.disp_rate_sb, 1, 7)
 
         self.scan_box.frame.addWidget(qt.QLabel("Counter ch:"), 2, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.counter_cb = qt.QComboBox()
+        self.counter_cb = newComboBox()
         self.counter_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
         self.counter_cb.currentTextChanged[str].connect(lambda val, text="counter channel": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.counter_cb, 2, 1, 1, 2)
 
         self.scan_box.frame.addWidget(qt.QLabel("Counter PFI:"), 2, 4, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.counter_pfi_cb = qt.QComboBox()
+        self.counter_pfi_cb = newComboBox()
         self.counter_pfi_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
         self.counter_pfi_cb.currentTextChanged[str].connect(lambda val, text="counter PFI line": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.counter_pfi_cb, 2, 5, 1, 2)
 
         self.scan_box.frame.addWidget(qt.QLabel("Trigger ch:"), 3, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.trigger_cb = qt.QComboBox()
+        self.trigger_cb = newComboBox()
         self.trigger_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
         self.trigger_cb.currentTextChanged[str].connect(lambda val, text="trigger channel": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.trigger_cb, 3, 1, 1, 2)
