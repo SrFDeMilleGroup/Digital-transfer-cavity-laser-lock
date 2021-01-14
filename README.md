@@ -4,7 +4,7 @@ This graphical user interface (GUI) is designed for the purpose of frequency sta
 
 In this frequency stabilization method, the cavity is first locked to a stable frequency source, for example, a helium-neon laser, by scanning the cavity and locking the position of transmission peaks of the frequency reference using a proportional-integral-derivative (PID) feedback loop. Then ECDLs can be frequency stabilized to the cavity by locking the position of their own transmission peaks using PID loops. Transmission peaks are detected by photodetectors and ECDL frequencies is adjusted by piezo actuators. A National Instruments (NI) data acquisition (DAQ) card is required for data acquisition and generation. Details of this frequency stabilization method can be found in Chapter 4.7 of this [thesis](http://demillegroup.yale.edu/sites/default/files/files/John%20Barry%20Thesis%20website%20version.pdf). Software developed in that thesis laid the foundation of this work.
 
-Equipped with an Intel Core i7-5820K CPU and a PCIe-6259 DAQ, the digital feedback loop can run at ~200 Hz. A 24-inch 1080p monitor is recommended for best GUI appearance.
+Equipped with an Intel Core i7-5820K CPU and a PCIe-6259 DAQ, the digital feedback loop can run at ~200 Hz. A 24-inch 1080p monitor is recommended for best GUI appearance. Frequently tested on Windows 7 and python 3.8.
 
 ![screenshot](docs/screenshot.png)
 

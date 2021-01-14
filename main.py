@@ -16,6 +16,7 @@ from collections import deque
 import socket
 import selectors
 import struct
+import ctypes
 
 # convert GUI widget size in unit pt to unit px using monitor dpi
 def pt_to_px(pt):
@@ -549,6 +550,7 @@ class daqThread(PyQt5.QtCore.QThread):
         self.dt = 1.0/self.samp_rate
         # number of samples to write/read
         self.samp_num = round(self.parent.config["scan time"]/1000.0*self.samp_rate)
+        self.laser_num = len(self.parent.laser_list)
 
         # initialize all DAQ tasks
         self.ai_task_init() # read data for cavity and all lasers
@@ -558,18 +560,18 @@ class daqThread(PyQt5.QtCore.QThread):
         self.do_task_init() # trigger the counter to generate a pulse train, running in "on demand" mode
 
     def run(self):
-        self.laser_output = []
-        self.laser_last_err = []
-        self.laser_last_feedback = []
-        for laser in self.parent.laser_list:
-            self.laser_output.append(laser.config["offset"]) # initial output voltage is the "offset"
-            self.laser_last_err.append(deque([0, 0], maxlen=2)) # save frequency errors in laset two cycles, used for PID calculation
-            self.laser_last_feedback.append(0) # initial feedback voltage is zero
+        self.laser_output = np.empty(self.laser_num, dtype=np.float64)
+        self.laser_last_err = np.zeros((self.laser_num, 2), dtype=np.float64) # save frequency errors in laset two cycles, used for PID calculation
+        self.laser_last_feedback = np.zeros(self.laser_num, dtype=np.float64) # initial feedback voltage is zero
+        self.laser_peak_found = np.zeros(self.laser_num, dtype=np.bool_) # initially all False
+        for i, laser in enumerate(self.parent.laser_list):
+            self.laser_output[i] = laser.config["offset"] # initial output voltage is the "offset"
 
-        self.cavity_scan = np.linspace(self.parent.config["scan amp"], 0, self.samp_num) # cavity scanning voltage, reversed sawtooth wave
+        self.cavity_scan = np.linspace(self.parent.config["scan amp"], 0, self.samp_num, dtype=np.float64) # cavity scanning voltage, reversed sawtooth wave
         self.cavity_output = self.parent.cavity.config["offset"] # initial output voltage is the "offset"
-        self.cavity_last_err = deque([0, 0], maxlen=2) # save frequency errors in laset two cycles, used for PID calculation
+        self.cavity_last_err = np.zeros(2, dtype=np.float64) # save frequency errors in laset two cycles, used for PID calculation
         self.cavity_last_feedback = 0 # initial feedback voltage is zero
+        self.cavity_peak_found = False
 
         self.laser_ao_task.write(self.laser_output)
         self.cavity_ao_task.write(self.cavity_scan + self.cavity_output)
@@ -585,9 +587,10 @@ class daqThread(PyQt5.QtCore.QThread):
         self.do_task.write([False, True, False])
 
         while self.parent.active:
-            pd_data = self.ai_task.read(number_of_samples_per_channel=self.samp_num, timeout=10.0)
+            pd_data = np.array(self.ai_task.read(number_of_samples_per_channel=self.samp_num, timeout=10.0), dtype=np.float64)
             # force pd_data to be a 2D array (in case there's only one channel in ai_task so ai_task.read() returns a 1D array)
-            pd_data = np.reshape(pd_data, (len(pd_data), -1))
+            if pd_data.ndim != 2:
+                pd_data = np.reshape(pd_data, (len(pd_data), -1))
 
             # chop array, because the beginning part of the data array usually have undesired peaks
             start_length = round(self.parent.config["scan ignore"]/1000*self.samp_rate)
@@ -598,6 +601,7 @@ class daqThread(PyQt5.QtCore.QThread):
 
             # normally this frequency lock method requires two cavity scanning peaks
             if len(cavity_peaks) == 2:
+                self.cavity_peak_found = True
                 # convert the position of the first peak into unit ms
                 cavity_first_peak = cavity_peaks[0]*self.dt*1000
                 # convert the separation of peaks into unit ms
@@ -618,12 +622,14 @@ class daqThread(PyQt5.QtCore.QThread):
                 else:
                     print("cavity feedback voltage is NaN.")
                     self.cavity_output = self.parent.cavity.config["offset"] + self.cavity_last_feedback
-                self.cavity_last_err.append(cavity_err)
+                self.cavity_last_err[0] = self.cavity_last_err[1]
+                self.cavity_last_err[1] = cavity_err
 
                 for i, laser in enumerate(self.parent.laser_list):
                     # find laser peak using "peak height/width" criteria
                     laser_peak, _ = signal.find_peaks(pd_data[i+1], height=laser.config["peak height"], width=laser.config["peak width"])
                     if len(laser_peak) > 0:
+                        self.laser_peak_found[i] = True
                         # choose a frequency setpoint source
                         freq_setpoint = laser.config["global freq"] if laser.config["freq source"] == "global" else laser.config["local freq"]
                         # calculate laser frequency error signal, use the position of the first peak
@@ -642,12 +648,15 @@ class daqThread(PyQt5.QtCore.QThread):
                         else:
                             print(f"laser {i} feedback voltage is NaN.")
                             self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
-                        self.laser_last_err[i].append(laser_err)
+                        self.laser_last_err[i][0] = self.laser_last_err[i][1]
+                        self.laser_last_err[i][1] = laser_err
 
                     else:
+                        self.laser_peak_found[i] = False
                         self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
 
             else:
+                self.cavity_peak_found = False
                 # otherwise use feedback voltage from last cycle
                 cavity_first_peak = cavity_peaks[0]*self.dt*1000 if len(cavity_peaks)>0 else np.nan # in ms
                 cavity_pk_sep = np.nan
@@ -690,9 +699,11 @@ class daqThread(PyQt5.QtCore.QThread):
                 data_dict["cavity pk sep"] = cavity_pk_sep
                 data_dict["cavity error"] = self.cavity_last_err[1]
                 data_dict["cavity output"] = self.cavity_output
+                data_dict["cavity peak found"] = self.cavity_peak_found
                 data_dict["laser pd_data"] = pd_data[1:, :]
-                data_dict["laser error"] = np.array(self.laser_last_err)[:, 1]
+                data_dict["laser error"] = self.laser_last_err[:, 1]
                 data_dict["laser output"] = self.laser_output
+                data_dict["laser peak found"] = self.laser_peak_found
                 self.signal.emit(data_dict)
 
             self.counter += 1
@@ -1232,7 +1243,7 @@ class mainWindow(qt.QMainWindow):
         self.cavity_err_queue.append(dict["cavity error"])
         rms = np.std(self.cavity_err_queue)
         self.cavity.rms_width_la.setText("{:.2f} MHz".format(rms))
-        if rms < self.config["lock criteria"] and np.abs(dict["cavity error"]) < self.config["lock criteria"]:
+        if rms < self.config["lock criteria"] and np.abs(dict["cavity error"]) < self.config["lock criteria"] and dict["cavity peak found"]:
             if not self.cavity.locked:
                 self.cavity.locked = True
                 self.cavity.locked_la.setStyleSheet("QLabel{background: green}")
@@ -1250,7 +1261,7 @@ class mainWindow(qt.QMainWindow):
             laser.actual_freq_la.setText("{:.1f} MHz".format(freq_setpoint+dict["laser error"][i]))
             rms = np.std(self.laser_err_list[i])
             laser.rms_width_la.setText("{:.2f} MHz".format(rms))
-            if rms < self.config["lock criteria"] and dict["laser error"][i] < self.config["lock criteria"]:
+            if rms < self.config["lock criteria"] and dict["laser error"][i] < self.config["lock criteria"] and dict["cavity peak found"] and dict["laser peak found"][i]:
                 if not laser.locked:
                     laser.locked = True
                     laser.locked_la.setStyleSheet("QLabel{background: green}")
@@ -1378,6 +1389,13 @@ class mainWindow(qt.QMainWindow):
         self.tcp_thread.start()
 
 if __name__ == '__main__':
+    # Thanks O. Grasdijk for pointing this out,
+    # nidaqmx.Task.read() uses windows timer for timing, higher timer resolution can improve loop performance
+    # default resolution can vary in differnt computers
+    current_res = ctypes.c_ulong()
+    # units are 100 ns, set windows timer resolution to be 1 ms.
+    ctypes.windll.ntdll.NtSetTimerResolution(10000, True, ctypes.byref(current_res))
+
     app = qt.QApplication(sys.argv)
     # screen = app.screens()
     # monitor_dpi = screen[0].physicalDotsPerInch()
@@ -1385,6 +1403,7 @@ if __name__ == '__main__':
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
     prog = mainWindow(app)
     app.exec_()
+
     # make sure daq and tcp threads are closed
     prog.tcp_stop()
     prog.daq_stop()
