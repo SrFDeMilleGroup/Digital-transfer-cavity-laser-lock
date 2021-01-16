@@ -1053,6 +1053,7 @@ class mainWindow(qt.QMainWindow):
         self.cavity.err_curve = self.err_plot.plot()
         self.cavity.err_curve.setPen('w')
         self.laser_box.frame.addWidget(self.cavity)
+
         self.laser_list = []
 
         return control_box
@@ -1218,6 +1219,10 @@ class mainWindow(qt.QMainWindow):
 
     # start frequency lock
     def start(self):
+        if len(self.laser_list) == 0:
+            print("Start locking: at least one laser is required.")
+            return
+            
         self.daq_start()
 
         self.start_pb.setText("Stop Lock")
