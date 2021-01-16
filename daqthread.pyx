@@ -123,7 +123,7 @@ class daqThread(PyQt5.QtCore.QThread):
 
                 for i, laser in enumerate(self.parent.laser_list):
                     for j in range(samp_num-start_length):
-                        laser_pd_data[i] = pd_data[i+1][j+start_length]
+                        laser_pd_data[j] = pd_data[i+1][j+start_length]
                     # find laser peak using "peak height/width" criteria
                     laser_peak, _ = signal.find_peaks(laser_pd_data, height=laser.config["peak height"], width=laser.config["peak width"])
                     if len(laser_peak) > 0:
@@ -131,7 +131,7 @@ class daqThread(PyQt5.QtCore.QThread):
                         # choose a frequency setpoint source
                         freq_setpoint = laser.config["global freq"] if laser.config["freq source"] == "global" else laser.config["local freq"]
                         # calculate laser frequency error signal, use the position of the first peak
-                        laser_err = freq_setpoint - (laser_peak[0]*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
+                        laser_err = freq_setpoint - (laser_peak[0]*dt-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
                         # calculate laser PID feedback volatge, use "scan time" for an approximate loop time
                         laser_feedback = laser_last_feedback[i] + \
                                          (laser_err-laser_last_err[i][1])*laser.config["kp"]*laser.config["kp multiplier"]*laser.config["kp on"] + \
@@ -181,7 +181,7 @@ class daqThread(PyQt5.QtCore.QThread):
                 # But this way reduces performance.
 
                 # This error may only occur in PCIe-6259 or similar DAQs
-                print(f"This is the {self.err_counter}-th time error occurs. \n{err}")
+                print(f"This is the {err_counter}-th time error occurs. \n{err}")
                 # Abort task, see https://zone.ni.com/reference/en-XX/help/370466AH-01/mxcncpts/taskstatemodel/
                 self.cavity_ao_task.control(nidaqmx.constants.TaskMode.TASK_ABORT)
                 # write to and and restart task
@@ -192,7 +192,7 @@ class daqThread(PyQt5.QtCore.QThread):
             self.do_task.write([True, False])
 
             # update GUI widgets every certain number of cycles
-            if counter%self.parent.config["display per"] == 0:
+            if counter%self.parent.config["display per"] == -1:
                 data_dict = {}
                 data_dict["cavity pd_data"] = pd_data[0][start_length:]
                 data_dict["cavity first peak"] = cavity_first_peak
