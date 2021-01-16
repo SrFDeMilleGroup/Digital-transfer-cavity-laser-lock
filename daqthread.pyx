@@ -41,8 +41,8 @@ class daqThread(PyQt5.QtCore.QThread):
             laser_output[i] = laser.config["offset"] # initial output voltage is the "offset"
 
         # cavity scanning voltage, reversed sawtooth wave
-        cdef np.ndarray[np.float64_t, ndim=1] cavity_scan = np.linspace(self.parent.config["scan amp"], 0, self.samp_num, dtype=np.float64)
-        cdef np.ndarray[np.float64_t, ndim=1] cavity_scan_output = np.zeros(self.parent.config["scan amp"], 0, self.samp_num, dtype=np.float64)
+        cdef np.ndarray[np.float64_t, ndim=1] cavity_scan = np.linspace(self.parent.config["scan amp"], 0, samp_num, dtype=np.float64)
+        cdef np.ndarray[np.float64_t, ndim=1] cavity_scan_output = np.zeros(samp_num, dtype=np.float64)
         # initial output voltage is the "offset"
         cdef double cavity_output = self.parent.cavity.config["offset"]
         for i in range(samp_num):
@@ -58,14 +58,14 @@ class daqThread(PyQt5.QtCore.QThread):
         cdef int start_length
 
         cdef np.ndarray[np.float64_t, ndim=1] cavity_pd_data
-        cdef np.ndarray[np.float64_t, ndim=1] cavity_peaks
+        cdef np.ndarray[np.longlong_t, ndim=1] cavity_peaks
         cdef double cavity_first_peak
         cdef double cavity_pk_sep
         cdef double cavity_err
         cdef double cavity_feedback
 
         cdef np.ndarray[np.float64_t, ndim=1] laser_pd_data
-        cdef np.ndarray[np.float64_t, ndim=1] laser_peak
+        cdef np.ndarray[np.longlong_t, ndim=1] laser_peak
         cdef double freq_setpoint
         cdef double laser_err
         cdef double laser_feedback
