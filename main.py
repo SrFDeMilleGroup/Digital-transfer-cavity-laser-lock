@@ -427,7 +427,7 @@ class cavityColumn(abstractLaserColumn):
 
         # setpoint of the first HeNe peak
         self.setpoint_dsb = newDoubleSpinBox(range=(0, 100), decimal=2, stepsize=0.1, suffix=" ms")
-        self.setpoint_dsb.valueChanged[float].connect(lambda val, text="setpoint": self.update_config_elem(text, val))
+        self.setpoint_dsb.valueChanged[float].connect(lambda val, text="set point": self.update_config_elem(text, val))
         self.freq_box.frame.addRow("Set point:", self.setpoint_dsb)
 
     def update_config(self, config):
@@ -834,7 +834,7 @@ class tcpThread(PyQt5.QtCore.QThread):
                                 laser_num = struct.unpack('>H', self.data[0:2])[0]
                                 laser_freq = struct.unpack('>d', self.data[2:10])[0]
                                 self.parent.laser_list[laser_num].config["global freq"] = laser_freq
-                                print(f"laser {laser_num}: freq = {laser_freq}")
+                                # print(f"laser {laser_num}: freq = {laser_freq}")
                                 self.signal.emit({"type": "data", "laser": laser_num, "freq": laser_freq})
                                 s.sendall(self.data[:10])
                                 # self.do_task.write([True, False]*20)
@@ -1258,7 +1258,7 @@ class mainWindow(qt.QMainWindow):
             laser.daq_output_la.setText("{:.3f} V".format(dict["laser output"][i]))
             self.laser_err_list[i].append(dict["laser error"][i])
             freq_setpoint = laser.config["local freq"] if laser.config["freq source"] == "local" else laser.config["global freq"]
-            laser.actual_freq_la.setText("{:.1f} MHz".format(freq_setpoint+dict["laser error"][i]))
+            laser.actual_freq_la.setText("{:.1f} MHz".format(freq_setpoint-dict["laser error"][i]))
             rms = np.std(self.laser_err_list[i])
             laser.rms_width_la.setText("{:.2f} MHz".format(rms))
             if rms < self.config["lock criteria"] and dict["laser error"][i] < self.config["lock criteria"] and dict["cavity peak found"] and dict["laser peak found"][i]:
