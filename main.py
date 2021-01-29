@@ -17,6 +17,7 @@ import socket
 import selectors
 import struct
 import ctypes
+import h5py
 
 # convert GUI widget size in unit pt to unit px using monitor dpi
 def pt_to_px(pt):
@@ -102,6 +103,11 @@ class newDoubleSpinBox(qt.QDoubleSpinBox):
         # mouse hovering over this widget and scrolling the wheel won't bring focus into it
         # mouse can bring focus to this widget by clicking it
         self.setFocusPolicy(PyQt5.QtCore.Qt.StrongFocus)
+
+        # scroll event and up/down button still emit valuechanged signal,
+        # but typing value through keyboard only emits valuecahnged signal when enter is pressed or focus is lost
+        self.setKeyboardTracking(False)
+
         # 0 != None
         # don't use "if not range:" statement, in case range is set to zero
         if range != None:
@@ -562,15 +568,15 @@ class daqThread(PyQt5.QtCore.QThread):
     def run(self):
         self.laser_output = np.empty(self.laser_num, dtype=np.float64)
         self.laser_last_err = np.zeros((self.laser_num, 2), dtype=np.float64) # save frequency errors in laset two cycles, used for PID calculation
-        self.laser_last_feedback = np.zeros(self.laser_num, dtype=np.float64) # initial feedback voltage is zero
+        self.laser_last_feedback = self.parent.laser_last_feedback # use feedback voltage from last run as the initial feedback voltage of this run, to avoid laser freq jump
         self.laser_peak_found = np.zeros(self.laser_num, dtype=np.bool_) # initially all False
         for i, laser in enumerate(self.parent.laser_list):
-            self.laser_output[i] = laser.config["offset"] # initial output voltage is the "offset"
+            self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
 
         self.cavity_scan = np.linspace(self.parent.config["scan amp"], 0, self.samp_num, dtype=np.float64) # cavity scanning voltage, reversed sawtooth wave
-        self.cavity_output = self.parent.cavity.config["offset"] # initial output voltage is the "offset"
         self.cavity_last_err = np.zeros(2, dtype=np.float64) # save frequency errors in laset two cycles, used for PID calculation
-        self.cavity_last_feedback = 0 # initial feedback voltage is zero
+        self.cavity_last_feedback = self.parent.cavity_last_feedback # use feedback voltage from last run as the initial feedback voltage of this run, to avoid laser freq jump
+        self.cavity_output = self.parent.cavity.config["offset"] + self.cavity_last_feedback
         self.cavity_peak_found = False
 
         self.laser_ao_task.write(self.laser_output)
@@ -707,6 +713,10 @@ class daqThread(PyQt5.QtCore.QThread):
                 self.signal.emit(data_dict)
 
             self.counter += 1
+
+        # save feedback voltage to parent data attribute
+        self.parent.cavity_last_feedback = self.cavity_last_feedback
+        self.parent.laser_last_feedback = self.laser_last_feedback
 
         # close all tasks and release resources when this loop finishes
         self.ai_task.close()
@@ -907,6 +917,15 @@ class mainWindow(qt.QMainWindow):
 
         self.scan_plot.setRange(yRange=(0, self.cavity.config["peak height"]*2.6))
 
+        # type of data that will be written into a hdf file for logging
+        self.dtp = [('time', h5py.string_dtype(encoding='utf-8')), ('cavity DAQ voltage/V', 'f')]
+        for i in range(len(self.laser_list)):
+            self.dtp.append((f'laser{i} freq/MHz', 'f'))
+
+        # used to save feedback voltage for daq_thread
+        self.cavity_last_feedback = 0
+        self.laser_last_feedback = np.zeros(len(self.laser_list), dtype=np.float64)
+
     # place controls in the middle part of this GUI
     def place_controls(self):
         control_box = scrollArea(layout_type="vbox", scroll_type="both")
@@ -1093,6 +1112,7 @@ class mainWindow(qt.QMainWindow):
         self.config["host address"] = config["Setting"].get("host address")
         self.config["port"] = config["Setting"].getint("port")
         self.config["num of lasers"] = config["Setting"].getint("num of lasers")
+        self.config["hdf_filename"] = config["Setting"].get("hdf_filename")
 
         # update number of lasers, add or delete current laserColumn instances
         self.update_lasers(self.config["num of lasers"])
@@ -1107,8 +1127,6 @@ class mainWindow(qt.QMainWindow):
     # update widget value/text from self.config
     def update_widgets(self):
         self.scan_amp_dsb.setValue(self.config["scan amp"])
-        self.scan_time_dsb.setValue(self.config["scan time"])
-        self.scan_ignore_dsb.setValue(self.config["scan ignore"])
         self.samp_rate_sb.setValue(self.config["sampling rate"])
         self.cavity_fsr_dsb.setValue(self.config["cavity FSR"])
         self.lock_criteria_dsb.setValue(self.config["lock criteria"])
@@ -1127,6 +1145,11 @@ class mainWindow(qt.QMainWindow):
         self.cavity.update_widgets()
         for laser in self.laser_list:
             laser.update_widgets()
+
+        # update this two after updating cavity.setpoint_dsb, because they may change its config value
+        # see self.update_config_elem function
+        self.scan_ignore_dsb.setValue(self.config["scan ignore"])
+        self.scan_time_dsb.setValue(self.config["scan time"])
 
     # update self.config elements
     def update_config_elem(self, text, val):
@@ -1217,8 +1240,6 @@ class mainWindow(qt.QMainWindow):
 
     # start frequency lock
     def start(self):
-        self.daq_start()
-
         self.start_pb.setText("Stop Lock")
         self.start_pb.disconnect()
         self.start_pb.clicked[bool].connect(self.stop)
@@ -1231,6 +1252,9 @@ class mainWindow(qt.QMainWindow):
         for laser in self.laser_list:
             laser.locked = False
             self.laser_err_list.append(deque([], maxlen=self.config["RMS length"]))
+
+        self.last_time_logging = 0
+        self.daq_start()
 
     # update GUI indicators to show feedback loop status
     @PyQt5.QtCore.pyqtSlot(dict)
@@ -1253,15 +1277,17 @@ class mainWindow(qt.QMainWindow):
                 self.cavity.locked_la.setStyleSheet("QLabel{background: #304249}")
         self.cavity.err_curve.setData(np.array(self.cavity_err_queue))
 
+        act_freq = []
         for i, laser in enumerate(self.laser_list):
             laser.scan_curve.setData(np.linspace(self.config["scan ignore"], self.config["scan time"], data_len), dict["laser pd_data"][i])
             laser.daq_output_la.setText("{:.3f} V".format(dict["laser output"][i]))
             self.laser_err_list[i].append(dict["laser error"][i])
             freq_setpoint = laser.config["local freq"] if laser.config["freq source"] == "local" else laser.config["global freq"]
-            laser.actual_freq_la.setText("{:.1f} MHz".format(freq_setpoint-dict["laser error"][i]))
+            act_freq.append(freq_setpoint-dict["laser error"][i] if dict["laser peak found"][i] else np.NaN)
+            laser.actual_freq_la.setText("{:.1f} MHz".format(act_freq[i]))
             rms = np.std(self.laser_err_list[i])
             laser.rms_width_la.setText("{:.2f} MHz".format(rms))
-            if rms < self.config["lock criteria"] and dict["laser error"][i] < self.config["lock criteria"] and dict["cavity peak found"] and dict["laser peak found"][i]:
+            if (rms < self.config["lock criteria"]) and (dict["laser error"][i] < self.config["lock criteria"]) and dict["cavity peak found"] and dict["laser peak found"][i]:
                 if not laser.locked:
                     laser.locked = True
                     laser.locked_la.setStyleSheet("QLabel{background: green}")
@@ -1270,6 +1296,20 @@ class mainWindow(qt.QMainWindow):
                     laser.locked = False
                     laser.locked_la.setStyleSheet("QLabel{background: #304249}")
             laser.err_curve.setData(np.array(self.laser_err_list[i]))
+
+        # log laser frequency and cavity PZT voltage
+        t = time.time()
+        if t - self.last_time_logging > 30: # in second
+            with h5py.File(self.config["hdf_filename"] + "_" + time.strftime("%Y%b") + ".hdf", "a") as hdf_file:
+                key = time.strftime("%b%d")
+                if key in hdf_file.keys():
+                    dset = hdf_file[key]
+                else:
+                    dset = hdf_file.create_dataset(key, shape=(0,), dtype=self.dtp, maxshape=(None,), compression="gzip", compression_opts=4)
+                dset.resize(dset.shape[0]+1, axis=0)
+                data = [tuple([time.strftime("%H:%M:%S"), dict["cavity output"]] + act_freq)]
+                dset[-1:] = data
+                self.last_time_logging = t
 
     # stop frequency lock
     def stop(self):
