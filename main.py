@@ -304,6 +304,14 @@ class abstractLaserColumn(qt.QGroupBox):
         self.wavenum_dsb.valueChanged[float].connect(lambda val, text="wavenumber": self.update_config_elem(text, val))
         daq_box.frame.addRow("Wave #:", self.wavenum_dsb)
 
+        self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
+
+    def place_clear_box(self):
+        clear_box = newBox(layout_type="grid")
+        self.frame.addWidget(clear_box)
+        self.clear_fb_pb = qt.QPushButton("Clear feedback voltage")
+        clear_box.frame.addWidget(self.clear_fb_pb, 0, 0)
+
     # collect available DAQ devices and their channels and update the content of DAQ channel comboBoxes
     def update_daq_channel(self):
         in_ch = self.daq_in_cb.currentText()
@@ -411,6 +419,7 @@ class cavityColumn(abstractLaserColumn):
         self.place_pid_box()
         self.place_voltage_box()
         self.place_daq_box()
+        self.place_clear_box()
 
         # update DAQ channel combboxes
         self.update_daq_channel()
@@ -432,9 +441,19 @@ class cavityColumn(abstractLaserColumn):
         self.freq_box.frame.addRow("Pk-pk sep.:", self.peak_sep_la)
 
         # setpoint of the first HeNe peak
-        self.setpoint_dsb = newDoubleSpinBox(range=(0, 100), decimal=2, stepsize=0.1, suffix=" ms")
+        self.setpoint_dsb = newDoubleSpinBox(range=(0, 100), decimal=2, stepsize=0.01, suffix=" ms")
         self.setpoint_dsb.valueChanged[float].connect(lambda val, text="set point": self.update_config_elem(text, val))
         self.freq_box.frame.addRow("Set point:", self.setpoint_dsb)
+
+    def place_clear_box(self):
+        super().place_clear_box()
+        self.clear_fb_pb.clicked[bool].connect(lambda val:self.clear_feedback())
+
+    def clear_feedback(self):
+        try:
+            self.parent.daq_thread.cavity_last_feedback = 0
+        except AttributeError:
+            pass
 
     def update_config(self, config):
         super().update_config(config)
@@ -452,8 +471,9 @@ class cavityColumn(abstractLaserColumn):
 
 # this class handles the laser
 class laserColumn(abstractLaserColumn):
-    def __init__(self, parent):
+    def __init__(self, index, parent):
         super().__init__(parent)
+        self.index = index
         self.config["global freq"] = 0
 
         # place GUI widgets
@@ -464,6 +484,7 @@ class laserColumn(abstractLaserColumn):
         self.place_pid_box()
         self.place_voltage_box()
         self.place_daq_box()
+        self.place_clear_box()
 
         # update DAQ channel combboxes
         self.update_daq_channel()
@@ -512,6 +533,16 @@ class laserColumn(abstractLaserColumn):
         self.actual_freq_la = qt.QLabel("0 MHz")
         self.actual_freq_la.setToolTip("Actual Frequency")
         self.freq_box.frame.addRow("A. F.:", self.actual_freq_la)
+
+    def place_clear_box(self):
+        super().place_clear_box()
+        self.clear_fb_pb.clicked[bool].connect(lambda val:self.clear_feedback())
+
+    def clear_feedback(self):
+        try:
+            self.parent.daq_thread.laser_last_feedback[self.index] = 0
+        except AttributeError:
+            pass
 
     def update_config(self, config):
         super().update_config(config)
@@ -670,8 +701,11 @@ class daqThread(PyQt5.QtCore.QThread):
                 for i, laser in enumerate(self.parent.laser_list):
                     self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
 
-            # generate laser piezo feedback voltage from ao channels
-            self.laser_ao_task.write(self.laser_output)
+            try:
+                # generate laser piezo feedback voltage from ao channels
+                self.laser_ao_task.write(self.laser_output)
+            except nidaqmx.errors.DaqError as err:
+                print(f"A DAQ error happened at laser ao channels \n{err}")
 
             try:
                 # update cavity scanning voltage
@@ -747,7 +781,7 @@ class daqThread(PyQt5.QtCore.QThread):
     def cavity_ao_task_init(self):
         self.cavity_ao_task = nidaqmx.Task("cavity ao task")
         # add cavity ao channel to this task
-        cavity_ao_ch = self.cavity_ao_task.ao_channels.add_ao_voltage_chan(self.parent.cavity.config["daq ao"], min_val=-5.0, max_val=10.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+        cavity_ao_ch = self.cavity_ao_task.ao_channels.add_ao_voltage_chan(self.parent.cavity.config["daq ao"], min_val=-2.0, max_val=6.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
         # to avoid error200018
         # https://forums.ni.com/t5/Multifunction-DAQ/poor-analog-output-performance-error-200018/td-p/1525156?profile.language=en
         cavity_ao_ch.ao_data_xfer_mech = nidaqmx.constants.DataTransferActiveTransferMode.DMA
@@ -770,7 +804,7 @@ class daqThread(PyQt5.QtCore.QThread):
         self.laser_ao_task = nidaqmx.Task("laser ao task")
         # add laser ao channel to this task
         for laser in self.parent.laser_list:
-            self.laser_ao_task.ao_channels.add_ao_voltage_chan(laser.config["daq ao"], min_val=-5.0, max_val=9.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+            self.laser_ao_task.ao_channels.add_ao_voltage_chan(laser.config["daq ao"], min_val=-2.0, max_val=2.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
         # no sample clock timing or trigger is specified, this task is running in "on demand" mode.
 
     # initialize a do task, it will be used to trigger the counter
@@ -879,7 +913,7 @@ class mainWindow(qt.QMainWindow):
         super().__init__()
         self.app = app
         self.setWindowTitle("Transfer Cavity Laser Lock")
-        self.color_list = ["#800000", "#008080", "#000080"]
+        self.color_list = ["#c65027","#008080", "#8e8538"]
         self.config = {}
         self.active = False
 
@@ -1078,12 +1112,13 @@ class mainWindow(qt.QMainWindow):
     def update_lasers(self, num_lasers):
         # add laser columns
         while num_lasers > len(self.laser_list):
-            laser = laserColumn(self)
+            i = len(self.laser_list)
+            laser = laserColumn(i, self)
             laser.scan_curve = self.scan_plot.plot()
-            laser.scan_curve.setPen(self.color_list[len(self.laser_list)%3])
+            laser.scan_curve.setPen(self.color_list[i%3], width=1)
             laser.err_curve = self.err_plot.plot()
-            laser.err_curve.setPen(self.color_list[len(self.laser_list)%3])
-            laser.label_box.setStyleSheet("QGroupBox{background: "+self.color_list[len(self.laser_list)%3]+"}")
+            laser.err_curve.setPen(self.color_list[i%3])
+            laser.label_box.setStyleSheet("QGroupBox{background: "+self.color_list[i%3]+"}")
             self.laser_list.append(laser)
             self.laser_box.frame.addWidget(laser)
 
@@ -1287,7 +1322,7 @@ class mainWindow(qt.QMainWindow):
             laser.actual_freq_la.setText("{:.1f} MHz".format(act_freq[i]))
             rms = np.std(self.laser_err_list[i])
             laser.rms_width_la.setText("{:.2f} MHz".format(rms))
-            if (rms < self.config["lock criteria"]) and (dict["laser error"][i] < self.config["lock criteria"]) and dict["cavity peak found"] and dict["laser peak found"][i]:
+            if (rms < self.config["lock criteria"]) and (np.abs(dict["laser error"][i]) < self.config["lock criteria"]) and dict["cavity peak found"] and dict["laser peak found"][i]:
                 if not laser.locked:
                     laser.locked = True
                     laser.locked_la.setStyleSheet("QLabel{background: green}")
@@ -1299,7 +1334,7 @@ class mainWindow(qt.QMainWindow):
 
         # log laser frequency and cavity PZT voltage
         t = time.time()
-        if t - self.last_time_logging > 30: # in second
+        if t - self.last_time_logging > 120: # in second
             with h5py.File(self.config["hdf_filename"] + "_" + time.strftime("%Y%b") + ".hdf", "a") as hdf_file:
                 key = time.strftime("%b%d")
                 if key in hdf_file.keys():
@@ -1427,6 +1462,21 @@ class mainWindow(qt.QMainWindow):
         self.tcp_thread = tcpThread(self)
         self.tcp_thread.signal.connect(self.update_tcp_widget)
         self.tcp_thread.start()
+
+    def closeEvent(self, event):
+        if not self.active:
+            super().closeEvent(event)
+
+        else:
+            # ask if continue to close
+            ans = qt.QMessageBox.warning(self, 'Program warning',
+                                'Warning: the program is running. Conitnue to close the program?',
+                                qt.QMessageBox.Yes | qt.QMessageBox.No,
+                                qt.QMessageBox.No)
+            if ans == qt.QMessageBox.Yes:
+                super().closeEvent(event)
+            else:
+                event.ignore()
 
 if __name__ == '__main__':
     # Thanks O. Grasdijk for pointing this out,
