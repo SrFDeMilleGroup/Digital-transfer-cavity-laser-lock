@@ -518,8 +518,8 @@ class laserColumn(abstractLaserColumn):
         self.freq_box.frame.addRow("G. F.:", global_box)
 
         self.local_freq_dsb = newDoubleSpinBox(range=(0, 1500), decimal=1, stepsize=1, suffix=" MHz")
-        self.local_freq_dsb.setToolTip("Local Frequency")
-        self.local_freq_dsb.valueChanged[float].connect(lambda val, text="local freq": self.update_config_elem(text, val))
+        self.local_freq_dsb.setToolTip("Local Frequency 0")
+        self.local_freq_dsb.valueChanged[float].connect(lambda val, text="local freq 0": self.update_config_elem(text, val))
         self.local_rb = qt.QRadioButton()
         self.local_rb.toggled[bool].connect(lambda val, source="local": self.set_freq_source(source, val))
         self.local_rb.setChecked(True)
@@ -547,13 +547,14 @@ class laserColumn(abstractLaserColumn):
     def update_config(self, config):
         super().update_config(config)
         self.config["label"] = config.get("label")
-        self.config["local freq"] = config.getfloat("local freq/MHz")
+        self.config["local freq 0"] = config.getfloat("local freq 0/MHz")
+        self.config["local freq 1"] = config.getfloat("local freq 1/MHz")
         self.config["freq source"] = config.get("freq source")
 
     def update_widgets(self):
         super().update_widgets()
         self.label_le.setText(self.config["label"])
-        self.local_freq_dsb.setValue(self.config["local freq"])
+        self.local_freq_dsb.setValue(self.config["local freq 0"])
         if self.config["freq source"] == "local":
             self.local_rb.setChecked(True)
         elif self.config["freq source"] == "global":
@@ -564,7 +565,7 @@ class laserColumn(abstractLaserColumn):
     def save_config(self):
         config = super().save_config()
         config["label"] = self.config["label"]
-        config["local freq/MHz"] = str(self.config["local freq"])
+        config["local freq 0/MHz"] = str(self.config["local freq 0"])
         config["freq source"] = self.config["freq source"]
 
         return config
@@ -595,9 +596,11 @@ class daqThread(PyQt5.QtCore.QThread):
         self.laser_ao_task_init() # control laser piezo voltage, running in "on demand" mode
         self.counter_task_init() # configure a counter to use as the clock for ai_task and cavity_ao_task, for synchronization and retriggerability
         self.do_task_init() # trigger the counter to generate a pulse train, running in "on demand" mode
+        self.di_task_init() # the input value will decide which local frequency to lock to
 
     def run(self):
         self.laser_output = np.empty(self.laser_num, dtype=np.float64)
+        self.laser_act_freq = np.empty(self.laser_num, dtype=np.float64)
         self.laser_last_err = np.zeros((self.laser_num, 2), dtype=np.float64) # save frequency errors in laset two cycles, used for PID calculation
         self.laser_last_feedback = self.parent.laser_last_feedback # use feedback voltage from last run as the initial feedback voltage of this run, to avoid laser freq jump
         self.laser_peak_found = np.zeros(self.laser_num, dtype=np.bool_) # initially all False
@@ -615,16 +618,25 @@ class daqThread(PyQt5.QtCore.QThread):
 
         # start all tasks
         self.ai_task.start()
+        self.di_task.start()
         self.cavity_ao_task.start()
         self.laser_ao_task.start()
         self.counter_task.start()
         self.do_task.start()
 
-        # trigger counter, to start AI/AO for the first cycle
+        # trigger counter, so ai/ao will work
         self.do_task.write([False, True, False])
+        self.last_di_read = [False, False]
+        pd_data = np.array(self.ai_task.read(number_of_samples_per_channel=self.samp_num, timeout=10.0), dtype=np.float64)
 
         while self.parent.active:
-            pd_data = np.array(self.ai_task.read(number_of_samples_per_channel=self.samp_num, timeout=10.0), dtype=np.float64)
+            self.last_di_read[0] = self.last_di_read[1]
+            self.last_di_read[1] = self.di_task.read() # the value will decide which local frequency to lock to.
+            if (self.last_di_read[0] != self.last_di_read[1]):
+                # postpone feedback by 5ms when di value is changed
+                time.sleep(0.005)
+                # print("postponed")
+
             # force pd_data to be a 2D array (in case there's only one channel in ai_task so ai_task.read() returns a 1D array)
             if pd_data.ndim != 2:
                 pd_data = np.reshape(pd_data, (len(pd_data), -1))
@@ -667,10 +679,16 @@ class daqThread(PyQt5.QtCore.QThread):
                     laser_peak, _ = signal.find_peaks(pd_data[i+1], height=laser.config["peak height"], width=laser.config["peak width"])
                     if len(laser_peak) > 0:
                         self.laser_peak_found[i] = True
+                        self.laser_act_freq[i] = (laser_peak[0]*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
                         # choose a frequency setpoint source
-                        freq_setpoint = laser.config["global freq"] if laser.config["freq source"] == "global" else laser.config["local freq"]
+                        if laser.config["freq source"] == "global":
+                            freq_setpoint = laser.config["global freq"]
+                        elif self.last_di_read[1]:
+                            freq_setpoint = laser.config["local freq 1"]
+                        else:
+                            freq_setpoint = laser.config["local freq 0"]
                         # calculate laser frequency error signal, use the position of the first peak
-                        laser_err = freq_setpoint - (laser_peak[0]*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
+                        laser_err = freq_setpoint - self.laser_act_freq[i]
                         # calculate laser PID feedback volatge, use "scan time" for an approximate loop time
                         laser_feedback = self.laser_last_feedback[i] + \
                                          (laser_err-self.laser_last_err[i][1])*laser.config["kp"]*laser.config["kp multiplier"]*laser.config["kp on"] + \
@@ -680,13 +698,19 @@ class daqThread(PyQt5.QtCore.QThread):
                         laser_feedback = np.clip(laser_feedback, self.laser_last_feedback[i]-self.parent.cavity.config["limit"], self.laser_last_feedback[i]+self.parent.cavity.config["limit"])
                         # check if laser feedback voltage is NaN, use feedback voltage from last cycle if it is
                         if not np.isnan(laser_feedback):
-                            self.laser_last_feedback[i] = laser_feedback
-                            self.laser_output[i] = laser.config["offset"] + laser_feedback
+                            if (self.last_di_read[0] == self.last_di_read[1]):
+                                # switch off the feedbask in the first cycle when di input value changed
+                                self.laser_last_feedback[i] = laser_feedback
+                            # self.laser_last_feedback[i] = laser_feedback
+                            self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
                         else:
                             print(f"laser {i} feedback voltage is NaN.")
                             self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
-                        self.laser_last_err[i][0] = self.laser_last_err[i][1]
-                        self.laser_last_err[i][1] = laser_err
+
+                        if (self.last_di_read[0] == self.last_di_read[1]):
+                            # switch off the feedbask in the first cycle when di input value changed
+                            self.laser_last_err[i][0] = self.laser_last_err[i][1]
+                            self.laser_last_err[i][1] = laser_err
 
                     else:
                         self.laser_peak_found[i] = False
@@ -728,7 +752,7 @@ class daqThread(PyQt5.QtCore.QThread):
                 self.cavity_ao_task.write(self.cavity_scan + self.cavity_output, auto_start=True)
                 self.err_counter += 1
 
-            # trigger counter again, so AI/AO will work
+            # trigger counter again, so ai/ao will work
             self.do_task.write([True, False])
 
             # update GUI widgets every certain number of cycles
@@ -742,11 +766,14 @@ class daqThread(PyQt5.QtCore.QThread):
                 data_dict["cavity peak found"] = self.cavity_peak_found
                 data_dict["laser pd_data"] = pd_data[1:, :]
                 data_dict["laser error"] = self.laser_last_err[:, 1]
+                data_dict["laser act freq"] = self.laser_act_freq
                 data_dict["laser output"] = self.laser_output
                 data_dict["laser peak found"] = self.laser_peak_found
                 self.signal.emit(data_dict)
 
             self.counter += 1
+
+            pd_data = np.array(self.ai_task.read(number_of_samples_per_channel=self.samp_num, timeout=10.0), dtype=np.float64)
 
         # save feedback voltage to parent data attribute
         self.parent.cavity_last_feedback = self.cavity_last_feedback
@@ -754,6 +781,7 @@ class daqThread(PyQt5.QtCore.QThread):
 
         # close all tasks and release resources when this loop finishes
         self.ai_task.close()
+        self.di_task.close()
         self.cavity_ao_task.close()
         self.laser_ao_task.close()
         self.counter_task.close()
@@ -826,6 +854,11 @@ class daqThread(PyQt5.QtCore.QThread):
         self.counter_task.triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source=self.parent.config["trigger channel"], trigger_edge=nidaqmx.constants.Edge.RISING)
         # make this task retriggerable
         self.counter_task.triggers.start_trigger.retriggerable = True
+
+    # initialize a di task, the input value will decide which frequency setpoint to lock to.
+    def di_task_init(self):
+        self.di_task = nidaqmx.Task("di_task")
+        self.di_task.di_channels.add_di_chan('Dev2/port0/line8')
 
 # There is a great tutorial about socket programming: https://realpython.com/python-sockets/
 # part of my code is adapted from here.
@@ -943,7 +976,7 @@ class mainWindow(qt.QMainWindow):
 
         cf = configparser.ConfigParser()
         cf.optionxform = str # make config key name case sensitive
-        cf.read("saved_settings\Rb_cavity_lock_setting.ini")
+        cf.read("saved_settings\Rb_cavity_lock_setting_jump.ini")
 
         self.update_daq_channel()
         self.update_config(cf)
@@ -1317,8 +1350,9 @@ class mainWindow(qt.QMainWindow):
             laser.scan_curve.setData(np.linspace(self.config["scan ignore"], self.config["scan time"], data_len), dict["laser pd_data"][i])
             laser.daq_output_la.setText("{:.3f} V".format(dict["laser output"][i]))
             self.laser_err_list[i].append(dict["laser error"][i])
-            freq_setpoint = laser.config["local freq"] if laser.config["freq source"] == "local" else laser.config["global freq"]
-            act_freq.append(freq_setpoint-dict["laser error"][i] if dict["laser peak found"][i] else np.NaN)
+
+            # freq_setpoint = laser.config["local freq"] if laser.config["freq source"] == "local" else laser.config["global freq"]
+            act_freq.append(dict["laser act freq"][i] if dict["laser peak found"][i] else np.NaN)
             laser.actual_freq_la.setText("{:.1f} MHz".format(act_freq[i]))
             rms = np.std(self.laser_err_list[i])
             laser.rms_width_la.setText("{:.2f} MHz".format(rms))
