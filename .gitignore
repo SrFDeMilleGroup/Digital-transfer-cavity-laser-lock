@@ -1,5 +1,5 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 test.py
-
+saved_settings/
 logging/
