@@ -5,6 +5,8 @@ import traceback
 import configparser
 import numpy as np
 from scipy import signal
+from scipy import sparse
+from scipy.sparse import linalg
 import PyQt5
 import pyqtgraph as pg
 import PyQt5.QtGui as QtGui
@@ -492,13 +494,13 @@ class laserColumn(abstractLaserColumn):
     # place laser label
     def place_label(self):
         self.label_box = newBox(layout_type="hbox")
-        la = qt.QLabel("  Laser:")
+        la = qt.QLabel("Laser:")
         la.setStyleSheet("QLabel{font: 16pt; background: transparent;}")
-        self.label_box.frame.addWidget(la, alignment=PyQt5.QtCore.Qt.AlignRight)
+        self.label_box.frame.addWidget(la, alignment=PyQt5.QtCore.Qt.AlignLeft)
 
         self.label_le = qt.QLineEdit()
-        self.label_le.setStyleSheet("QLineEdit{font: 16pt; background: transparent;}")
-        self.label_le.setFixedWidth(pt_to_px(30))
+        self.label_le.setStyleSheet("QLineEdit{font: 14pt; background: transparent;}")
+        self.label_le.setFixedWidth(pt_to_px(62))
         self.label_le.textChanged[str].connect(lambda val, text="label": self.update_config_elem(text, val))
         self.label_box.frame.addWidget(self.label_le, alignment=PyQt5.QtCore.Qt.AlignLeft)
         self.frame.addWidget(self.label_box)
@@ -620,11 +622,20 @@ class daqThread(PyQt5.QtCore.QThread):
         self.counter_task.start()
         self.do_task.start()
 
-        # trigger counter, to start AI/AO for the first cycle
-        self.do_task.write([False, True, False])
-
         while self.parent.active:
-            pd_data = np.array(self.ai_task.read(number_of_samples_per_channel=self.samp_num, timeout=10.0), dtype=np.float64)
+            num_run = self.parent.config["average"]
+            for i in range(num_run):
+                # trigger counter, to start AI/AO for the first cycle
+                self.do_task.write([False, True, False])
+                if i == 0:
+                    pd_data = np.array(self.ai_task.read(number_of_samples_per_channel=self.samp_num, timeout=10.0), dtype=np.float64)
+                else:
+                    ai_read = np.array(self.ai_task.read(number_of_samples_per_channel=self.samp_num, timeout=10.0), dtype=np.float64)
+                    pd_data = (ai_read + pd_data*i)/(i+1)
+
+                if i < num_run - 1:
+                    self.ao_task_write()
+
             # force pd_data to be a 2D array (in case there's only one channel in ai_task so ai_task.read() returns a 1D array)
             if pd_data.ndim != 2:
                 pd_data = np.reshape(pd_data, (len(pd_data), -1))
@@ -632,6 +643,14 @@ class daqThread(PyQt5.QtCore.QThread):
             # chop array, because the beginning part of the data array usually have undesired peaks
             start_length = round(self.parent.config["scan ignore"]/1000*self.samp_rate)
             pd_data = pd_data[:, start_length:]
+
+            # remove baseline
+            if self.parent.config["baseline remove"]:
+                for i in range(len(pd_data)):
+                    # print(pd_data[i])
+                    # _, pd_data_arPLS, info = self.baseline_arPLS(pd_data[i], ratio=1e-2, lam=1e5, niter=100, full_output=True) # great algorithm, just too slow for us
+                    # pd_data[i] = pd_data_arPLS
+                    pd_data[i] = pd_data[i] - np.mean(pd_data[i])
 
             # find cavity peaks using "peak height/width" criteria
             cavity_peaks, _ = signal.find_peaks(pd_data[0], height=self.parent.cavity.config["peak height"], width=self.parent.cavity.config["peak width"])
@@ -701,35 +720,7 @@ class daqThread(PyQt5.QtCore.QThread):
                 for i, laser in enumerate(self.parent.laser_list):
                     self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
 
-            try:
-                # generate laser piezo feedback voltage from ao channels
-                self.laser_ao_task.write(self.laser_output)
-            except nidaqmx.errors.DaqError as err:
-                print(f"A DAQ error happened at laser ao channels \n{err}")
-
-            try:
-                # update cavity scanning voltage
-                self.cavity_ao_task.write(self.cavity_scan + self.cavity_output)
-            except nidaqmx.errors.DaqError as err:
-                # This is to handle error -50410, which occurs randomly.
-                # "There was no space in buffer when new data was written.
-                # The oldest unread data in the buffer was lost as a result"
-
-                # The only way I know now to avoid this error is to release buffer in EVERY cycle,
-                # by calling "self.cavity_ao_task.control(nidaqmx.constants.TaskMode.TASK_UNRESERVE)"
-                # and then write to buffer "self.cavity_ao_task.write(self.cavity_scan + self.cavity_output, auto_start=True)".
-                # But this way reduces performance.
-
-                # This error may only occur in PCIe-6259 or similar DAQs
-                print(f"This is the {self.err_counter}-th time error occurs. \n{err}")
-                # Abort task, see https://zone.ni.com/reference/en-XX/help/370466AH-01/mxcncpts/taskstatemodel/
-                self.cavity_ao_task.control(nidaqmx.constants.TaskMode.TASK_ABORT)
-                # write to and and restart task
-                self.cavity_ao_task.write(self.cavity_scan + self.cavity_output, auto_start=True)
-                self.err_counter += 1
-
-            # trigger counter again, so AI/AO will work
-            self.do_task.write([True, False])
+            self.ao_task_write()
 
             # update GUI widgets every certain number of cycles
             if self.counter%self.parent.config["display per"] == 0:
@@ -827,6 +818,77 @@ class daqThread(PyQt5.QtCore.QThread):
         # make this task retriggerable
         self.counter_task.triggers.start_trigger.retriggerable = True
 
+    def ao_task_write(self):
+        try:
+            # generate laser piezo feedback voltage from ao channels
+            self.laser_ao_task.write(self.laser_output)
+        except nidaqmx.errors.DaqError as err:
+            print(f"A DAQ error happened at laser ao channels \n{err}")
+
+        try:
+            # update cavity scanning voltage
+            self.cavity_ao_task.write(self.cavity_scan + self.cavity_output)
+        except nidaqmx.errors.DaqError as err:
+            # This is to handle error -50410, which occurs randomly.
+            # "There was no space in buffer when new data was written.
+            # The oldest unread data in the buffer was lost as a result"
+
+            # The only way I know now to avoid this error is to release buffer in EVERY cycle,
+            # by calling "self.cavity_ao_task.control(nidaqmx.constants.TaskMode.TASK_UNRESERVE)"
+            # and then write to buffer "self.cavity_ao_task.write(self.cavity_scan + self.cavity_output, auto_start=True)".
+            # But this way reduces performance.
+
+            # This error may only occur in PCIe-6259 or similar DAQs
+            print(f"This is the {self.err_counter}-th time error occurs. \n{err}")
+            # Abort task, see https://zone.ni.com/reference/en-XX/help/370466AH-01/mxcncpts/taskstatemodel/
+            self.cavity_ao_task.control(nidaqmx.constants.TaskMode.TASK_ABORT)
+            # write to and and restart task
+            self.cavity_ao_task.write(self.cavity_scan + self.cavity_output, auto_start=True)
+            self.err_counter += 1
+
+    # code from https://stackoverflow.com/a/67509948
+    def baseline_arPLS(self, y, ratio=1e-6, lam=100, niter=50, full_output=False):
+        # lam for lambda, smoothness parameter
+        L = len(y)
+
+        diag = np.ones(L - 2)
+        D = sparse.spdiags([diag, -2*diag, diag], [0, -1, -2], L, L - 2)
+
+        H = lam * D.dot(D.T)  # The transposes are flipped w.r.t the Algorithm on pg. 252
+
+        w = np.ones(L)
+        W = sparse.spdiags(w, 0, L, L)
+
+        crit = 1
+        count = 0
+
+        while crit > ratio:
+            z = linalg.spsolve(W + H, W * y)
+            d = y - z
+            dn = d[d < 0]
+
+            m = np.mean(dn)
+            s = np.std(dn)
+
+            w_new = 1 / (1 + np.exp(2 * (d - (2*s - m))/s))
+
+            crit = np.linalg.norm(w_new - w) / np.linalg.norm(w)
+
+            w = w_new
+            W.setdiag(w)  # Do not create a new matrix, just update diagonal values
+
+            count += 1
+
+            if count > niter:
+                print('Maximum number of iterations exceeded')
+                break
+
+        if full_output:
+            info = {'num_iter': count, 'stop_criterion': crit}
+            return z, d, info
+        else:
+            return z
+
 # There is a great tutorial about socket programming: https://realpython.com/python-sockets/
 # part of my code is adapted from here.
 class tcpThread(PyQt5.QtCore.QThread):
@@ -836,7 +898,10 @@ class tcpThread(PyQt5.QtCore.QThread):
         super().__init__()
         self.parent = parent
         self.data = bytes()
-        self.host = self.parent.config["host address"]
+        if self.parent.config["host address"] == "None":
+            self.host = socket.gethostbyname(socket.gethostname())
+        else:
+            self.host = self.parent.config["host address"]
         self.port = self.parent.config["port"]
         self.sel = selectors.DefaultSelector()
 
@@ -912,8 +977,6 @@ class mainWindow(qt.QMainWindow):
     def __init__(self, app):
         super().__init__()
         self.app = app
-        self.setWindowTitle("Transfer Cavity Laser Lock")
-        self.color_list = ["#c65027","#008080", "#8e8538"]
         self.config = {}
         self.active = False
 
@@ -938,12 +1001,12 @@ class mainWindow(qt.QMainWindow):
         self.box.frame.addWidget(ctrl_box, 1, 0)
 
         self.setCentralWidget(self.box)
-        self.resize(pt_to_px(500), pt_to_px(700))
+        self.resize(pt_to_px(540), pt_to_px(750))
         self.show()
 
         cf = configparser.ConfigParser()
         cf.optionxform = str # make config key name case sensitive
-        cf.read("saved_settings\Rb_cavity_lock_setting.ini")
+        cf.read("saved_settings\cavity_lock_setting.ini")
 
         self.update_daq_channel()
         self.update_config(cf)
@@ -1034,27 +1097,38 @@ class mainWindow(qt.QMainWindow):
         self.disp_rate_sb.valueChanged[int].connect(lambda val, text="display per": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.disp_rate_sb, 1, 7)
 
-        self.scan_box.frame.addWidget(qt.QLabel("Counter ch:"), 2, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.scan_box.frame.addWidget(qt.QLabel("Average:"), 2, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.ave_rate_sb = newSpinBox(range=(1, 10000), stepsize=1, suffix=" run(s)")
+        self.ave_rate_sb.valueChanged[int].connect(lambda val, text="average": self.update_config_elem(text, val))
+        self.scan_box.frame.addWidget(self.ave_rate_sb, 2, 1)
+
+        self.scan_box.frame.addWidget(qt.QLabel("Baseline reomove:"), 2, 2, 1, 2, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.baseline_chb = qt.QCheckBox()
+        self.baseline_chb.setTristate(False)
+        self.baseline_chb.toggled[bool].connect(lambda val, text="baseline remove": self.update_config_elem(text, val))
+        self.scan_box.frame.addWidget(self.baseline_chb, 2, 4)     
+        
+        self.scan_box.frame.addWidget(qt.QLabel("Counter ch:"), 3, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
         self.counter_cb = newComboBox()
         self.counter_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
         self.counter_cb.currentTextChanged[str].connect(lambda val, text="counter channel": self.update_config_elem(text, val))
-        self.scan_box.frame.addWidget(self.counter_cb, 2, 1, 1, 2)
+        self.scan_box.frame.addWidget(self.counter_cb, 3, 1, 1, 2)
 
-        self.scan_box.frame.addWidget(qt.QLabel("Counter PFI:"), 2, 4, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.scan_box.frame.addWidget(qt.QLabel("Counter PFI:"), 3, 4, alignment = PyQt5.QtCore.Qt.AlignRight)
         self.counter_pfi_cb = newComboBox()
         self.counter_pfi_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
         self.counter_pfi_cb.currentTextChanged[str].connect(lambda val, text="counter PFI line": self.update_config_elem(text, val))
-        self.scan_box.frame.addWidget(self.counter_pfi_cb, 2, 5, 1, 2)
+        self.scan_box.frame.addWidget(self.counter_pfi_cb, 3, 5, 1, 2)
 
-        self.scan_box.frame.addWidget(qt.QLabel("Trigger ch:"), 3, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
+        self.scan_box.frame.addWidget(qt.QLabel("Trigger ch:"), 4, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
         self.trigger_cb = newComboBox()
         self.trigger_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
         self.trigger_cb.currentTextChanged[str].connect(lambda val, text="trigger channel": self.update_config_elem(text, val))
-        self.scan_box.frame.addWidget(self.trigger_cb, 3, 1, 1, 2)
+        self.scan_box.frame.addWidget(self.trigger_cb, 4, 1, 1, 2)
 
         self.refresh_daq_pb = qt.QPushButton("Refresh DAQ channels")
         self.refresh_daq_pb.clicked[bool].connect(lambda val: self.refresh_all_daq_ch())
-        self.scan_box.frame.addWidget(self.refresh_daq_pb, 3, 4, 1, 3)
+        self.scan_box.frame.addWidget(self.refresh_daq_pb, 4, 4, 1, 3)
 
         # third sub-box in this part, used for setting saving/loading control
         self.file_box = newBox(layout_type="hbox")
@@ -1115,10 +1189,10 @@ class mainWindow(qt.QMainWindow):
             i = len(self.laser_list)
             laser = laserColumn(i, self)
             laser.scan_curve = self.scan_plot.plot()
-            laser.scan_curve.setPen(self.color_list[i%3], width=1)
+            # laser.scan_curve.setPen(self.color_list[i%3], width=1)
             laser.err_curve = self.err_plot.plot()
-            laser.err_curve.setPen(self.color_list[i%3])
-            laser.label_box.setStyleSheet("QGroupBox{background: "+self.color_list[i%3]+"}")
+            # laser.err_curve.setPen(self.color_list[i%3])
+            # laser.label_box.setStyleSheet("QGroupBox{background: "+self.color_list[i%3]+"}")
             self.laser_list.append(laser)
             self.laser_box.frame.addWidget(laser)
 
@@ -1128,6 +1202,12 @@ class mainWindow(qt.QMainWindow):
             self.laser_list[-1].err_curve.clear()
             self.laser_list[-1].setParent(None)
             del self.laser_list[-1]
+
+        num_color = len(self.config["color list"])
+        for i, laser in enumerate(self.laser_list):
+            laser.scan_curve.setPen(self.config["color list"][i%num_color], width=1)
+            laser.err_curve.setPen(self.config["color list"][i%num_color])
+            laser.label_box.setStyleSheet("QGroupBox{background: "+self.config["color list"][i%num_color]+"}")
 
     # update self.config from config
     def update_config(self, config):
@@ -1148,6 +1228,10 @@ class mainWindow(qt.QMainWindow):
         self.config["port"] = config["Setting"].getint("port")
         self.config["num of lasers"] = config["Setting"].getint("num of lasers")
         self.config["hdf_filename"] = config["Setting"].get("hdf_filename")
+        self.config["window title"] = config["Setting"].get("window title")
+        self.config["color list"] = [x.strip() for x in config["Setting"].get("color list").split(",")]
+        self.config["average"] = config["Setting"].getint("average")
+        self.config["baseline remove"] = config["Setting"].getboolean("baseline remove")
 
         # update number of lasers, add or delete current laserColumn instances
         self.update_lasers(self.config["num of lasers"])
@@ -1161,12 +1245,16 @@ class mainWindow(qt.QMainWindow):
 
     # update widget value/text from self.config
     def update_widgets(self):
+        self.setWindowTitle(self.config["window title"])
+
         self.scan_amp_dsb.setValue(self.config["scan amp"])
         self.samp_rate_sb.setValue(self.config["sampling rate"])
         self.cavity_fsr_dsb.setValue(self.config["cavity FSR"])
         self.lock_criteria_dsb.setValue(self.config["lock criteria"])
         self.rms_length_sb.setValue(self.config["RMS length"])
         self.disp_rate_sb.setValue(self.config["display per"])
+        self.ave_rate_sb.setValue(self.config["average"])
+        self.baseline_chb.setChecked(self.config["baseline remove"])
 
         self.counter_cb.setCurrentText(self.config["counter channel"])
         self.config["counter channel"] = self.counter_cb.currentText()
@@ -1175,7 +1263,10 @@ class mainWindow(qt.QMainWindow):
         self.trigger_cb.setCurrentText(self.config["trigger channel"])
         self.config["trigger channel"] = self.trigger_cb.currentText()
 
-        self.server_addr_la.setText(self.config["host address"]+" ("+str(self.config["port"])+")")
+        if self.config["host address"] == "None":
+            self.server_addr_la.setText(socket.gethostbyname(socket.gethostname())+" ("+str(self.config["port"])+")")
+        else:
+            self.server_addr_la.setText(self.config["host address"]+" ("+str(self.config["port"])+")")
 
         self.cavity.update_widgets()
         for laser in self.laser_list:
@@ -1232,7 +1323,7 @@ class mainWindow(qt.QMainWindow):
             if overwrite == qt.QMessageBox.No:
                 return
 
-        config = configparser.ConfigParser()
+        config = configparser.ConfigParser(allow_no_value=True)
         config.optionxform = str
 
         config["Setting"] = {}
@@ -1247,9 +1338,15 @@ class mainWindow(qt.QMainWindow):
         config["Setting"]["counter channel"] = self.config["counter channel"]
         config["Setting"]["counter PFI line"] = self.config["counter PFI line"]
         config["Setting"]["trigger channel"] = self.config["trigger channel"]
+        config["Setting"]["# host address can be None or a valid address"] = None
         config["Setting"]["host address"] = self.config["host address"]
         config["Setting"]["port"] = str(self.config["port"])
         config["Setting"]["num of lasers"] = str(len(self.laser_list))
+        config["Setting"]["hdf_filename"] = self.config["hdf_filename"]
+        config["Setting"]["window title"] = self.config["window title"]
+        config["Setting"]["color list"] = ", ".join(self.config["color list"])
+        config["Setting"]["average"] = str(self.config["average"])
+        config["Setting"]["baseline remove"] = str(self.config["baseline remove"])
 
         # export cavity/laser config
         config["Cavity"] = self.cavity.save_config()
@@ -1335,15 +1432,27 @@ class mainWindow(qt.QMainWindow):
         # log laser frequency and cavity PZT voltage
         t = time.time()
         if t - self.last_time_logging > 120: # in second
+            data = [time.strftime("%H:%M:%S"), dict["cavity output"]] + act_freq
             with h5py.File(self.config["hdf_filename"] + "_" + time.strftime("%Y%b") + ".hdf", "a") as hdf_file:
                 key = time.strftime("%b%d")
                 if key in hdf_file.keys():
                     dset = hdf_file[key]
+                    counter = 2
+                    # if the number of lasers changes, data can't be written to the old dset, because of its different format
+                    # if the number of lasers changes, search if there's a dset that has the right format, otherwise create a new one
+                    # dset is named after time.strftime("%b%d") or time.strftime("%b%d") + f"_{counter}" (e.g. Jan24 or Jan24_2)
+                    while len(dset[0]) != len(data):
+                        if (key + f"_{counter}") in hdf_file.keys():
+                            dset = hdf_file[key + f"_{counter}"]
+                            counter += 1
+                        else:
+                            dset = hdf_file.create_dataset(key + f"_{counter}", shape=(0,), dtype=self.dtp, maxshape=(None,), compression="gzip", compression_opts=4)
+                            break
                 else:
                     dset = hdf_file.create_dataset(key, shape=(0,), dtype=self.dtp, maxshape=(None,), compression="gzip", compression_opts=4)
+
                 dset.resize(dset.shape[0]+1, axis=0)
-                data = [tuple([time.strftime("%H:%M:%S"), dict["cavity output"]] + act_freq)]
-                dset[-1:] = data
+                dset[-1:] = [tuple(data)]
                 self.last_time_logging = t
 
     # stop frequency lock
