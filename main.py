@@ -21,158 +21,8 @@ import struct
 import ctypes
 import h5py
 
-# convert GUI widget size in unit pt to unit px using monitor dpi
-def pt_to_px(pt):
-    return round(pt*monitor_dpi/72)
+from widgets import NewBox, NewComboBox, NewDoubleSpinBox, NewPlot, NewScrollArea, NewSpinBox, hline, pt_to_px, ScientificDoubleSpinBox
 
-# a formated QGroupBox with a layout attached
-class newBox(qt.QGroupBox):
-    def __init__(self, layout_type="grid"):
-        super().__init__()
-        self.setStyleSheet("QGroupBox {border: 0px;}")
-        if layout_type == "grid":
-            self.frame = qt.QGridLayout()
-        elif layout_type == "vbox":
-            self.frame = qt.QVBoxLayout()
-        elif layout_type == "hbox":
-            self.frame = qt.QHBoxLayout()
-        elif layout_type == "form":
-            self.frame = qt.QFormLayout()
-            self.frame.setHorizontalSpacing(0)
-            self.setStyleSheet("QGroupBox {border: 0px; padding-left: 0; padding-right: 0;}")
-        else:
-            print("newBox: layout type not supported.")
-            self.frame = qt.QGridLayout()
-        self.frame.setContentsMargins(0,0,0,0)
-        self.setLayout(self.frame)
-
-# a QLabel with many "-" as content, used as a delimiter for GUI widgets
-class hLine(qt.QLabel):
-    def __init__(self):
-        super().__init__()
-        self.setText("-"*50)
-        self.setMaximumHeight(pt_to_px(7))
-
-# a formated QGroupBox with scrollable area in it
-# Adapted https://github.com/js216/CeNTREX/blob/master/main.py
-class scrollArea(qt.QGroupBox):
-    def __init__(self, layout_type, scroll_type="both"):
-        super().__init__()
-        self.setStyleSheet("QGroupBox{margin-top: 0;}")
-        # self.setSizePolicy(qt.QSizePolicy.MinimumExpanding, qt.QSizePolicy.Preferred)
-        outer_layout = qt.QGridLayout()
-        outer_layout.setContentsMargins(0,0,0,0)
-        self.setLayout(outer_layout)
-
-        self.scroll = qt.QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        if scroll_type == "vertical":
-            self.scroll.horizontalScrollBar().setEnabled(False)
-            self.scroll.setHorizontalScrollBarPolicy(PyQt5.QtCore.Qt.ScrollBarAlwaysOff)
-        elif scroll_type == "horizontal":
-            self.scroll.verticalScrollBar().setEnabled(False)
-            self.scroll.setVerticalScrollBarPolicy(PyQt5.QtCore.Qt.ScrollBarAlwaysOff)
-        elif scroll_type == "both":
-            pass
-        else:
-            print("scrollArea: scroll type not supported.")
-            return
-
-        # scroll.setFrameStyle(0x10) # see https://doc.qt.io/qt-5/qframe.html for different frame styles
-        self.scroll.setStyleSheet("QFrame{border: 0px;}")
-        outer_layout.addWidget(self.scroll)
-
-        box = qt.QWidget()
-        self.scroll.setWidget(box)
-        if layout_type == "hbox":
-            self.frame = qt.QHBoxLayout()
-        elif layout_type == "vbox":
-            self.frame = qt.QVBoxLayout()
-        elif layout_type == "grid":
-            self.frame = qt.QGridLayout()
-        else:
-            print("scrollArea: layout type not supported.")
-            return
-        self.frame.setContentsMargins(0,0,0,0)
-        box.setLayout(self.frame)
-
-# a doublespinbox that won't respond if the mouse just hovers over it and scrolls the wheel,
-# it will respond if it's clicked and get focus
-# the purpose is to avoid accidental value change
-class newDoubleSpinBox(qt.QDoubleSpinBox):
-    def __init__(self, range=None, decimal=None, stepsize=None, suffix=None):
-        super().__init__()
-        # mouse hovering over this widget and scrolling the wheel won't bring focus into it
-        # mouse can bring focus to this widget by clicking it
-        self.setFocusPolicy(PyQt5.QtCore.Qt.StrongFocus)
-
-        # scroll event and up/down button still emit valuechanged signal,
-        # but typing value through keyboard only emits valuecahnged signal when enter is pressed or focus is lost
-        self.setKeyboardTracking(False)
-
-        # 0 != None
-        # don't use "if not range:" statement, in case range is set to zero
-        if range != None:
-            self.setRange(range[0], range[1])
-        if decimal != None:
-            self.setDecimals(decimal)
-        if stepsize != None:
-            self.setSingleStep(stepsize)
-        if suffix != None:
-            self.setSuffix(suffix)
-
-    # modify wheelEvent so this widget only responds when it has focus
-    def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            # if the event is ignored, it will be passed to and handled by parent widget
-            event.ignore()
-
-# modify SpinBox for the same reason as modifying DoubleSpinBox, see comments for newDoubleSpinBox class
-class newSpinBox(qt.QSpinBox):
-    def __init__(self, range=None, stepsize=None, suffix=None):
-        super().__init__()
-        self.setFocusPolicy(PyQt5.QtCore.Qt.StrongFocus)
-
-        if range != None:
-            self.setRange(range[0], range[1])
-        if stepsize != None:
-            self.setSingleStep(stepsize)
-        if suffix != None:
-            self.setSuffix(suffix)
-
-    def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
-
-# modify ComboBox for the same reason as modifying DoubleSpinBox, see comments for newDoubleSpinBox class
-class newComboBox(qt.QComboBox):
-    def __init__(self):
-        super().__init__()
-        self.setFocusPolicy(PyQt5.QtCore.Qt.StrongFocus)
-
-    def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
-
-# a formated plot widget
-class newPlot(pg.PlotWidget):
-    def __init__(self, parent):
-        super().__init__()
-        tickstyle = {"showValues": False}
-
-        self.showGrid(True, True)
-        self.setLabel("top")
-        self.getAxis("top").setStyle(**tickstyle)
-        self.setLabel("right")
-        self.getAxis("right").setStyle(**tickstyle)
-
-        self.getAxis("bottom").enableAutoSIPrefix(False)
 
 # the base class for cavityColumn class and laserColumn class
 class abstractLaserColumn(qt.QGroupBox):
@@ -193,82 +43,82 @@ class abstractLaserColumn(qt.QGroupBox):
 
     # place peak height and width doubleSpinBoxes
     def place_peak_box(self):
-        peak_box = newBox(layout_type="form")
+        peak_box = NewBox(layout_type="form")
         self.frame.addWidget(peak_box)
 
-        self.peak_height_dsb = newDoubleSpinBox(range=(0, 10), decimal=3, stepsize=0.01, suffix=" V")
+        self.peak_height_dsb = NewDoubleSpinBox(range=(0, 10), decimal=3, suffix=" V")
         self.peak_height_dsb.valueChanged[float].connect(lambda val, text="peak height": self.update_config_elem(text, val))
         peak_box.frame.addRow("Peak height:", self.peak_height_dsb)
 
-        self.peak_width_sb = newSpinBox(range=(0, 1000), stepsize=1, suffix=" pt")
+        self.peak_width_sb = NewSpinBox(range=(0, 1000), suffix=" pt")
         self.peak_width_sb.valueChanged[int].connect(lambda val, text="peak width": self.update_config_elem(text, val))
         peak_box.frame.addRow("Peak width:", self.peak_width_sb)
 
-        self.frame.addWidget(hLine(), alignment = PyQt5.QtCore.Qt.AlignHCenter)
+        self.frame.addWidget(hline(), alignment = PyQt5.QtCore.Qt.AlignHCenter)
 
     # place a box and layout for frequency widgets, which will be added later in cavityColumn and laserColumn class
     def place_freq_box(self):
-        self.freq_box = newBox(layout_type="form")
+        self.freq_box = NewBox(layout_type="form")
         self.frame.addWidget(self.freq_box)
 
-        self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
+        self.frame.addWidget(hline(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
 
     # place PID parameter widgets
     def place_pid_box(self):
-        pid_box = newBox(layout_type="form")
+        pid_box = NewBox(layout_type="form")
         self.frame.addWidget(pid_box)
 
         # proportional feedback
-        self.kp_dsb = newDoubleSpinBox(range=(-100, 100), decimal=2, stepsize=1, suffix=None)
+        self.kp_dsb = NewDoubleSpinBox(range=(-100, 100), decimal=2, suffix=None)
         self.kp_dsb.valueChanged[float].connect(lambda val, text="kp": self.update_config_elem(text, val))
 
         self.kp_chb = qt.QCheckBox()
         self.kp_chb.toggled[bool].connect(lambda val, text="kp on": self.update_config_elem(text, val))
         self.kp_chb.setTristate(False)
 
-        kp_box = newBox(layout_type="hbox")
+        kp_box = NewBox(layout_type="hbox")
         kp_box.frame.addWidget(self.kp_dsb)
         kp_box.frame.addWidget(self.kp_chb, alignment = PyQt5.QtCore.Qt.AlignRight)
         pid_box.frame.addRow("KP:", kp_box)
 
         # integral feedback
-        self.ki_dsb = newDoubleSpinBox(range=(-100, 100), decimal=2, stepsize=1, suffix=None)
+        self.ki_dsb = NewDoubleSpinBox(range=(-100, 100), decimal=2, suffix=None)
         self.ki_dsb.valueChanged[float].connect(lambda val, text="ki": self.update_config_elem(text, val))
 
         self.ki_chb = qt.QCheckBox()
         self.ki_chb.toggled[bool].connect(lambda val, text="ki on": self.update_config_elem(text, val))
         self.ki_chb.setTristate(False)
 
-        ki_box = newBox(layout_type="hbox")
+        ki_box = NewBox(layout_type="hbox")
         ki_box.frame.addWidget(self.ki_dsb)
         ki_box.frame.addWidget(self.ki_chb, alignment = PyQt5.QtCore.Qt.AlignRight)
         pid_box.frame.addRow("KI:", ki_box)
 
         # derivative feedback
-        self.kd_dsb = newDoubleSpinBox(range=(-100, 100), decimal=2, stepsize=1, suffix=None)
+        self.kd_dsb = NewDoubleSpinBox(range=(-100, 100), decimal=2, suffix=None)
         self.kd_dsb.valueChanged[float].connect(lambda val, text="kd": self.update_config_elem(text, val))
 
         self.kd_chb = qt.QCheckBox()
         self.kd_chb.toggled[bool].connect(lambda val, text="kd on": self.update_config_elem(text, val))
         self.kd_chb.setTristate(False)
 
-        kd_box = newBox(layout_type="hbox")
+        kd_box = NewBox(layout_type="hbox")
         kd_box.frame.addWidget(self.kd_dsb)
         kd_box.frame.addWidget(self.kd_chb, alignment = PyQt5.QtCore.Qt.AlignRight)
         pid_box.frame.addRow("KD:", kd_box)
 
-        self.frame.addWidget(hLine(), alignment = PyQt5.QtCore.Qt.AlignHCenter)
+        self.frame.addWidget(hline(), alignment = PyQt5.QtCore.Qt.AlignHCenter)
 
     # place widgets related to DAQ analog output voltage and laser frequency noise
     def place_voltage_box(self):
-        voltage_box = newBox(layout_type="form")
+        voltage_box = NewBox(layout_type="form")
         self.frame.addWidget(voltage_box)
 
-        self.offset_dsb = newDoubleSpinBox(range=(-10, 10), decimal=2, stepsize=0.01, suffix=" V")
+        self.offset_dsb = NewDoubleSpinBox(range=(-10, 10), decimal=2, suffix=" V")
         self.offset_dsb.valueChanged[float].connect(lambda val, text="offset": self.update_config_elem(text, val))
         voltage_box.frame.addRow("Offset:", self.offset_dsb)
 
-        self.limit_dsb = newDoubleSpinBox(range=(-10, 10), decimal=3, stepsize=0.01, suffix=" V")
+        self.limit_dsb = NewDoubleSpinBox(range=(-10, 10), decimal=3, suffix=" V")
         self.limit_dsb.valueChanged[float].connect(lambda val, text="limit": self.update_config_elem(text, val))
         voltage_box.frame.addRow("Limit:", self.limit_dsb)
 
@@ -282,34 +132,34 @@ class abstractLaserColumn(qt.QGroupBox):
         self.locked_la.setStyleSheet("QLabel{background: #304249}")
         voltage_box.frame.addRow("Locked:", self.locked_la)
 
-        self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
+        self.frame.addWidget(hline(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
 
     # place DAQ channel and wavenumber widgets
     def place_daq_box(self):
-        daq_box = newBox(layout_type="form")
+        daq_box = NewBox(layout_type="form")
         self.frame.addWidget(daq_box)
 
-        self.daq_in_cb = newComboBox()
+        self.daq_in_cb = NewComboBox()
         self.daq_in_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
         self.daq_in_cb.setMaximumWidth(pt_to_px(74))
         self.daq_in_cb.currentTextChanged[str].connect(lambda val, text="daq ai": self.update_config_elem(text, val))
         daq_box.frame.addRow("DAQ ai:", self.daq_in_cb)
 
-        self.daq_out_cb = newComboBox()
+        self.daq_out_cb = NewComboBox()
         self.daq_out_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
         self.daq_out_cb.setMaximumWidth(pt_to_px(74))
         self.daq_out_cb.currentTextChanged[str].connect(lambda val, text="daq ao": self.update_config_elem(text, val))
         daq_box.frame.addRow("DAQ ao:", self.daq_out_cb)
 
-        self.wavenum_dsb = newDoubleSpinBox(range=(0, 20000), decimal=1, stepsize=1, suffix="  1/cm")
+        self.wavenum_dsb = NewDoubleSpinBox(range=(0, 20000), decimal=1, suffix="  1/cm")
         self.wavenum_dsb.setMaximumWidth(pt_to_px(74))
         self.wavenum_dsb.valueChanged[float].connect(lambda val, text="wavenumber": self.update_config_elem(text, val))
         daq_box.frame.addRow("Wave #:", self.wavenum_dsb)
 
-        self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
+        self.frame.addWidget(hline(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
 
     def place_clear_box(self):
-        clear_box = newBox(layout_type="grid")
+        clear_box = NewBox(layout_type="grid")
         self.frame.addWidget(clear_box)
         self.clear_fb_pb = qt.QPushButton("Clear feedback voltage")
         clear_box.frame.addWidget(self.clear_fb_pb, 0, 0)
@@ -346,13 +196,10 @@ class abstractLaserColumn(qt.QGroupBox):
     def update_config(self, config):
         self.config["peak height"] = config.getfloat("peak height/V")
         self.config["peak width"] = config.getint("peak width/pts")
-        self.config["kp multiplier"] = config.getfloat("kp multiplier")
         self.config["kp"] = config.getfloat("kp")
         self.config["kp on"] = config.getboolean("kp on")
-        self.config["ki multiplier"] = config.getfloat("ki multiplier")
         self.config["ki"] = config.getfloat("ki")
         self.config["ki on"] = config.getboolean("ki on")
-        self.config["kd multiplier"] = config.getfloat("kd multiplier")
         self.config["kd"] = config.getfloat("kd")
         self.config["kd on"] = config.getboolean("kd on")
         self.config["offset"] = config.getfloat("offset/V")
@@ -365,13 +212,10 @@ class abstractLaserColumn(qt.QGroupBox):
     def update_widgets(self):
         self.peak_height_dsb.setValue(self.config["peak height"])
         self.peak_width_sb.setValue(self.config["peak width"])
-        self.kp_dsb.setSuffix(" x"+np.format_float_scientific(self.config["kp multiplier"], exp_digits=1))
         self.kp_dsb.setValue(self.config["kp"])
         self.kp_chb.setChecked(self.config["kp on"])
-        self.ki_dsb.setSuffix(" x"+np.format_float_scientific(self.config["ki multiplier"], exp_digits=1))
         self.ki_dsb.setValue(self.config["ki"])
         self.ki_chb.setChecked(self.config["ki on"])
-        self.kd_dsb.setSuffix(" x"+np.format_float_scientific(self.config["kd multiplier"], exp_digits=1))
         self.kd_dsb.setValue(self.config["kd"])
         self.kd_chb.setChecked(self.config["kd on"])
         self.offset_dsb.setValue(self.config["offset"])
@@ -391,13 +235,10 @@ class abstractLaserColumn(qt.QGroupBox):
         config = {}
         config["peak height/V"] = str(self.config["peak height"])
         config["peak width/pts"] = str(self.config["peak width"])
-        config["kp multiplier"] = str(self.config["kp multiplier"])
         config["kp"] = str(self.config["kp"])
         config["kp on"] = str(self.config["kp on"])
-        config["ki multiplier"] = str(self.config["ki multiplier"])
         config["ki"] = str(self.config["ki"])
         config["ki on"] = str(self.config["ki on"])
-        config["kd multiplier"] = str(self.config["kd multiplier"])
         config["kd"] = str(self.config["kd"])
         config["kd on"] = str(self.config["kd on"])
         config["offset/V"] = str(self.config["offset"])
@@ -431,7 +272,7 @@ class cavityColumn(abstractLaserColumn):
         la = qt.QLabel("Cavity/HeNe")
         la.setStyleSheet("QLabel{font: 16pt;}")
         self.frame.addWidget(la, alignment=PyQt5.QtCore.Qt.AlignHCenter)
-        # self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
+        # self.frame.addWidget(hline(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
 
     def place_freq_widget(self):
         # position of the first peak
@@ -443,7 +284,7 @@ class cavityColumn(abstractLaserColumn):
         self.freq_box.frame.addRow("Pk-pk sep.:", self.peak_sep_la)
 
         # setpoint of the first HeNe peak
-        self.setpoint_dsb = newDoubleSpinBox(range=(0, 100), decimal=2, stepsize=0.01, suffix=" ms")
+        self.setpoint_dsb = NewDoubleSpinBox(range=(0, 100), decimal=2, suffix=" ms")
         self.setpoint_dsb.valueChanged[float].connect(lambda val, text="set point": self.update_config_elem(text, val))
         self.freq_box.frame.addRow("Set point:", self.setpoint_dsb)
 
@@ -493,7 +334,7 @@ class laserColumn(abstractLaserColumn):
 
     # place laser label
     def place_label(self):
-        self.label_box = newBox(layout_type="hbox")
+        self.label_box = NewBox(layout_type="hbox")
         la = qt.QLabel("Laser:")
         la.setStyleSheet("QLabel{font: 16pt; background: transparent;}")
         self.label_box.frame.addWidget(la, alignment=PyQt5.QtCore.Qt.AlignLeft)
@@ -514,12 +355,12 @@ class laserColumn(abstractLaserColumn):
         rbgroup = qt.QButtonGroup(self.parent)
         rbgroup.addButton(self.global_rb)
 
-        global_box = newBox(layout_type="hbox")
+        global_box = NewBox(layout_type="hbox")
         global_box.frame.addWidget(self.global_freq_la)
         global_box.frame.addWidget(self.global_rb, alignment=PyQt5.QtCore.Qt.AlignRight)
         self.freq_box.frame.addRow("G. F.:", global_box)
 
-        self.local_freq_dsb = newDoubleSpinBox(range=(0, 1500), decimal=1, stepsize=1, suffix=" MHz")
+        self.local_freq_dsb = NewDoubleSpinBox(range=(0, 1500), decimal=1, suffix=" MHz")
         self.local_freq_dsb.setToolTip("Local Frequency")
         self.local_freq_dsb.valueChanged[float].connect(lambda val, text="local freq": self.update_config_elem(text, val))
         self.local_rb = qt.QRadioButton()
@@ -527,7 +368,7 @@ class laserColumn(abstractLaserColumn):
         self.local_rb.setChecked(True)
         rbgroup.addButton(self.local_rb)
 
-        local_box = newBox(layout_type="hbox")
+        local_box = NewBox(layout_type="hbox")
         local_box.frame.addWidget(self.local_freq_dsb)
         local_box.frame.addWidget(self.local_rb, alignment=PyQt5.QtCore.Qt.AlignRight)
         self.freq_box.frame.addRow("L. F.:", local_box)
@@ -561,7 +402,7 @@ class laserColumn(abstractLaserColumn):
         elif self.config["freq source"] == "global":
             self.global_rb.setChecked(True)
         else:
-            print("LaserColumn: invalid frequency setpoint source")
+            logging.info("LaserColumn: invalid frequency setpoint source")
 
     def save_config(self):
         config = super().save_config()
@@ -647,7 +488,7 @@ class daqThread(PyQt5.QtCore.QThread):
             # remove baseline
             if self.parent.config["baseline remove"]:
                 for i in range(len(pd_data)):
-                    # print(pd_data[i])
+                    # logging.info(pd_data[i])
                     # _, pd_data_arPLS, info = self.baseline_arPLS(pd_data[i], ratio=1e-2, lam=1e5, niter=100, full_output=True) # great algorithm, just too slow for us
                     # pd_data[i] = pd_data_arPLS
                     pd_data[i] = pd_data[i] - np.mean(pd_data[i])
@@ -666,9 +507,9 @@ class daqThread(PyQt5.QtCore.QThread):
                 cavity_err = (self.parent.cavity.config["set point"] - self.parent.config["scan ignore"] - cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]
                 # calculate cavity PID feedback voltage, use "scan time" for an approximate loop time
                 cavity_feedback = self.cavity_last_feedback + \
-                                  (cavity_err-self.cavity_last_err[1])*self.parent.cavity.config["kp"]*self.parent.cavity.config["kp multiplier"]*self.parent.cavity.config["kp on"] + \
-                                  cavity_err*self.parent.cavity.config["ki"]*self.parent.cavity.config["ki multiplier"]*self.parent.cavity.config["ki on"]*self.parent.config["scan time"]/1000 + \
-                                  (cavity_err+self.cavity_last_err[0]-2*self.cavity_last_err[1])*self.parent.cavity.config["kd"]*self.parent.cavity.config["kd multiplier"]*self.parent.cavity.config["kd on"]/(self.parent.config["scan time"]/1000)
+                                  (cavity_err-self.cavity_last_err[1])*self.parent.cavity.config["kp"]*self.parent.cavity.config["kp on"] + \
+                                  cavity_err*self.parent.cavity.config["ki"]*self.parent.cavity.config["ki on"]*self.parent.config["scan time"]/1000 + \
+                                  (cavity_err+self.cavity_last_err[0]-2*self.cavity_last_err[1])*self.parent.cavity.config["kd"]*self.parent.cavity.config["kd on"]/(self.parent.config["scan time"]/1000)
                 # coerce cavity feedbak voltage to avoid big jump
                 cavity_feedback = np.clip(cavity_feedback, self.cavity_last_feedback-self.parent.cavity.config["limit"], self.cavity_last_feedback+self.parent.cavity.config["limit"])
                 # check if cavity feedback voltage is NaN, use feedback voltage from last cycle if it is
@@ -676,7 +517,7 @@ class daqThread(PyQt5.QtCore.QThread):
                     self.cavity_last_feedback = cavity_feedback
                     self.cavity_output = self.parent.cavity.config["offset"] + cavity_feedback
                 else:
-                    print("cavity feedback voltage is NaN.")
+                    logging.warning("cavity feedback voltage is NaN.")
                     self.cavity_output = self.parent.cavity.config["offset"] + self.cavity_last_feedback
                 self.cavity_last_err[0] = self.cavity_last_err[1]
                 self.cavity_last_err[1] = cavity_err
@@ -692,9 +533,9 @@ class daqThread(PyQt5.QtCore.QThread):
                         laser_err = freq_setpoint - (laser_peak[0]*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
                         # calculate laser PID feedback volatge, use "scan time" for an approximate loop time
                         laser_feedback = self.laser_last_feedback[i] + \
-                                         (laser_err-self.laser_last_err[i][1])*laser.config["kp"]*laser.config["kp multiplier"]*laser.config["kp on"] + \
-                                         laser_err*laser.config["ki"]*laser.config["ki multiplier"]*laser.config["ki on"]*self.parent.config["scan time"]/1000 + \
-                                         (laser_err+self.laser_last_err[i][0]-2*self.laser_last_err[i][1])*laser.config["kd"]*laser.config["kd multiplier"]*laser.config["kd on"]/(self.parent.config["scan time"]/1000)
+                                         (laser_err-self.laser_last_err[i][1])*laser.config["kp"]*laser.config["kp on"] + \
+                                         laser_err*laser.config["ki"]*laser.config["ki on"]*self.parent.config["scan time"]/1000 + \
+                                         (laser_err+self.laser_last_err[i][0]-2*self.laser_last_err[i][1])*laser.config["kd"]*laser.config["kd on"]/(self.parent.config["scan time"]/1000)
                         # coerce laser feedbak voltage to avoid big jump
                         laser_feedback = np.clip(laser_feedback, self.laser_last_feedback[i]-self.parent.cavity.config["limit"], self.laser_last_feedback[i]+self.parent.cavity.config["limit"])
                         # check if laser feedback voltage is NaN, use feedback voltage from last cycle if it is
@@ -702,7 +543,7 @@ class daqThread(PyQt5.QtCore.QThread):
                             self.laser_last_feedback[i] = laser_feedback
                             self.laser_output[i] = laser.config["offset"] + laser_feedback
                         else:
-                            print(f"laser {i} feedback voltage is NaN.")
+                            logging.warning(f"laser {i} feedback voltage is NaN.")
                             self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
                         self.laser_last_err[i][0] = self.laser_last_err[i][1]
                         self.laser_last_err[i][1] = laser_err
@@ -753,7 +594,7 @@ class daqThread(PyQt5.QtCore.QThread):
 
     # initialize ai_task, which will handle analog read for all ai channels
     def ai_task_init(self):
-        self.ai_task = nidaqmx.Task("ai task")
+        self.ai_task = nidaqmx.Task("ai task"+time.strftime("%Y%m%d_%H%M%S"))
         # add cavity ai channel to this task
         self.ai_task.ai_channels.add_ai_voltage_chan(self.parent.cavity.config["daq ai"], min_val=-0.5, max_val=1.2, units=nidaqmx.constants.VoltageUnits.VOLTS)
         # add laser ai channels to this task
@@ -770,7 +611,7 @@ class daqThread(PyQt5.QtCore.QThread):
 
     # initialize cavity_ao_task
     def cavity_ao_task_init(self):
-        self.cavity_ao_task = nidaqmx.Task("cavity ao task")
+        self.cavity_ao_task = nidaqmx.Task("cavity ao task"+time.strftime("%Y%m%d_%H%M%S"))
         # add cavity ao channel to this task
         cavity_ao_ch = self.cavity_ao_task.ao_channels.add_ao_voltage_chan(self.parent.cavity.config["daq ao"], min_val=-2.0, max_val=6.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
         # to avoid error200018
@@ -792,7 +633,7 @@ class daqThread(PyQt5.QtCore.QThread):
 
     # initialize laser_ao_task, this task handles ao channel of all lasers
     def laser_ao_task_init(self):
-        self.laser_ao_task = nidaqmx.Task("laser ao task")
+        self.laser_ao_task = nidaqmx.Task("laser ao task"+time.strftime("%Y%m%d_%H%M%S"))
         # add laser ao channel to this task
         for laser in self.parent.laser_list:
             self.laser_ao_task.ao_channels.add_ao_voltage_chan(laser.config["daq ao"], min_val=-2.0, max_val=2.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
@@ -800,13 +641,13 @@ class daqThread(PyQt5.QtCore.QThread):
 
     # initialize a do task, it will be used to trigger the counter
     def do_task_init(self):
-        self.do_task = nidaqmx.Task("do task")
+        self.do_task = nidaqmx.Task("do task"+time.strftime("%Y%m%d_%H%M%S"))
         self.do_task.do_channels.add_do_chan(self.parent.config["trigger channel"])
         # no sample clock timing or trigger is specified, this task is running in "on demand" mode.
 
     # initialize a counter task, it will be used as the clock for ai_task and cavity_ao_task
     def counter_task_init(self):
-        self.counter_task = nidaqmx.Task("counter task")
+        self.counter_task = nidaqmx.Task("counter task"+time.strftime("%Y%m%d_%H%M%S"))
         self.counter_task.co_channels.add_co_pulse_chan_freq(
                                                             counter=self.parent.config["counter channel"],
                                                             units=nidaqmx.constants.FrequencyUnits.HZ,
@@ -823,7 +664,7 @@ class daqThread(PyQt5.QtCore.QThread):
             # generate laser piezo feedback voltage from ao channels
             self.laser_ao_task.write(self.laser_output)
         except nidaqmx.errors.DaqError as err:
-            print(f"A DAQ error happened at laser ao channels \n{err}")
+            logging.error(f"A DAQ error happened at laser ao channels \n{err}")
 
         try:
             # update cavity scanning voltage
@@ -839,7 +680,7 @@ class daqThread(PyQt5.QtCore.QThread):
             # But this way reduces performance.
 
             # This error may only occur in PCIe-6259 or similar DAQs
-            print(f"This is the {self.err_counter}-th time error occurs. \n{err}")
+            logging.info(f"This is the {self.err_counter}-th time error occurs. \n{err}")
             # Abort task, see https://zone.ni.com/reference/en-XX/help/370466AH-01/mxcncpts/taskstatemodel/
             self.cavity_ao_task.control(nidaqmx.constants.TaskMode.TASK_ABORT)
             # write to and and restart task
@@ -880,7 +721,7 @@ class daqThread(PyQt5.QtCore.QThread):
             count += 1
 
             if count > niter:
-                print('Maximum number of iterations exceeded')
+                logging.warning('Maximum number of iterations exceeded')
                 break
 
         if full_output:
@@ -910,7 +751,7 @@ class tcpThread(PyQt5.QtCore.QThread):
         self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_sock.bind((self.host, self.port))
         self.server_sock.listen()
-        print("listening on", (self.host, self.port))
+        logging.info("listening on", (self.host, self.port))
         self.server_sock.setblocking(False)
         self.sel.register(self.server_sock, selectors.EVENT_READ, data=None)
 
@@ -931,7 +772,7 @@ class tcpThread(PyQt5.QtCore.QThread):
                     try:
                         data = s.recv(1024) # 1024 bytes should be enough for our data
                     except Exception as err:
-                        print(f"TCP connection error: \n{err}")
+                        logging.error(f"TCP connection error: \n{err}")
                         continue
                     if data:
                         self.data += data
@@ -943,17 +784,17 @@ class tcpThread(PyQt5.QtCore.QThread):
                                 laser_num = struct.unpack('>H', self.data[0:2])[0]
                                 laser_freq = struct.unpack('>d', self.data[2:10])[0]
                                 self.parent.laser_list[laser_num].config["global freq"] = laser_freq
-                                # print(f"laser {laser_num}: freq = {laser_freq}")
+                                # logging.info(f"laser {laser_num}: freq = {laser_freq}")
                                 self.signal.emit({"type": "data", "laser": laser_num, "freq": laser_freq})
                                 s.sendall(self.data[:10])
                                 # self.do_task.write([True, False]*20)
                             except Exception as err:
-                                print(f"TCP Thread error: \n{err}")
+                                logging.error(f"TCP Thread error: \n{err}")
                             finally:
                                 self.data = self.data[10:]
                     else:
                         # empty data will be interpreted as the signal of client shutting down
-                        print("client shutting down...")
+                        logging.info("client shutting down...")
                         self.sel.unregister(s)
                         s.close()
                         self.signal.emit({"type": "close connection"})
@@ -965,7 +806,7 @@ class tcpThread(PyQt5.QtCore.QThread):
 
     def accept_wrapper(self, sock):
         conn, addr = sock.accept()  # Should be ready to read
-        print("accepted connection from", addr)
+        logging.info("accepted connection from", addr)
         conn.setblocking(False)
         self.sel.register(conn, selectors.EVENT_READ, data=123) # In this application, 'data' keyword can be anything but None
         return_dict = {}
@@ -979,20 +820,21 @@ class mainWindow(qt.QMainWindow):
         self.app = app
         self.config = {}
         self.active = False
+        logging.getLogger().setLevel("INFO")
 
-        self.box = newBox(layout_type="grid")
+        self.box = NewBox(layout_type="grid")
         self.box.frame.setRowStretch(0, 3)
         self.box.frame.setRowStretch(1, 8)
         self.box.frame.setRowStretch(2, 3)
 
         # top part of this GUI, a plot
-        self.scan_plot = newPlot(self)
+        self.scan_plot = NewPlot(self)
         fontstyle = {"color": "#919191", "font-size": "11pt"}
         self.scan_plot.setLabel("bottom", "time (ms)", **fontstyle)
         self.box.frame.addWidget(self.scan_plot, 0, 0)
 
         # bottom part of this GUI, another plot
-        self.err_plot = newPlot(self)
+        self.err_plot = NewPlot(self)
         self.err_plot.setLabel("left", "freq. error (MHz)", **fontstyle)
         self.box.frame.addWidget(self.err_plot, 2, 0)
 
@@ -1025,10 +867,10 @@ class mainWindow(qt.QMainWindow):
 
     # place controls in the middle part of this GUI
     def place_controls(self):
-        control_box = scrollArea(layout_type="vbox", scroll_type="both")
+        control_box = NewScrollArea(layout_type="vbox", scroll_type="both")
 
         # first sub-box in this part
-        start_box = newBox(layout_type="grid")
+        start_box = NewBox(layout_type="grid")
         control_box.frame.addWidget(start_box)
         start_box.frame.setColumnStretch(0, 5)
         start_box.frame.setColumnStretch(1, 5)
@@ -1052,53 +894,53 @@ class mainWindow(qt.QMainWindow):
         start_box.frame.addWidget(self.tcp_la, 0, 2, alignment = PyQt5.QtCore.Qt.AlignHCenter)
 
         # second sub-box in this part, used for widgets controling cavity scanning parameters
-        self.scan_box = newBox(layout_type="grid")
+        self.scan_box = NewBox(layout_type="grid")
         self.scan_box.setMaximumWidth(pt_to_px(520))
         self.scan_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
         control_box.frame.addWidget(self.scan_box)
 
         self.scan_box.frame.addWidget(qt.QLabel("Scan amp:"), 0, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.scan_amp_dsb = newDoubleSpinBox(range=(0, 10), decimal=2, stepsize=0.1, suffix=" V")
+        self.scan_amp_dsb = NewDoubleSpinBox(range=(0, 10), decimal=2, suffix=" V")
         self.scan_amp_dsb.valueChanged[float].connect(lambda val, text="scan amp": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.scan_amp_dsb, 0, 1)
 
         self.scan_box.frame.addWidget(qt.QLabel("Scan time:"), 0, 2, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.scan_time_dsb = newDoubleSpinBox(range=(0, 100), decimal=1, stepsize=0.1, suffix=" ms")
+        self.scan_time_dsb = NewDoubleSpinBox(range=(0, 100), decimal=1, suffix=" ms")
         self.scan_time_dsb.valueChanged[float].connect(lambda val, text="scan time": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.scan_time_dsb, 0, 3)
 
         self.scan_box.frame.addWidget(qt.QLabel("Scan ignore:"), 0, 4, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.scan_ignore_dsb = newDoubleSpinBox(range=(0, 100), decimal=2, stepsize=0.1, suffix=" ms")
+        self.scan_ignore_dsb = NewDoubleSpinBox(range=(0, 100), decimal=2, suffix=" ms")
         self.scan_ignore_dsb.valueChanged[float].connect(lambda val, text="scan ignore": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.scan_ignore_dsb, 0, 5)
 
         self.scan_box.frame.addWidget(qt.QLabel("Sample rate:"), 0, 6, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.samp_rate_sb = newSpinBox(range=(0, 1000000), stepsize=1000, suffix=" S/s")
+        self.samp_rate_sb = NewSpinBox(range=(0, 1000000), suffix=" S/s")
         self.samp_rate_sb.valueChanged[int].connect(lambda val, text="sampling rate": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.samp_rate_sb, 0, 7)
 
         self.scan_box.frame.addWidget(qt.QLabel("Cavity FSR:"), 1, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.cavity_fsr_dsb = newDoubleSpinBox(range=(0, 10000), decimal=1, stepsize=1, suffix=" MHz")
+        self.cavity_fsr_dsb = NewDoubleSpinBox(range=(0, 10000), decimal=1, suffix=" MHz")
         self.cavity_fsr_dsb.valueChanged[float].connect(lambda val, text="cavity FSR": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.cavity_fsr_dsb, 1, 1)
 
         self.scan_box.frame.addWidget(qt.QLabel("Lock Criteria:"), 1, 2, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.lock_criteria_dsb = newDoubleSpinBox(range=(0, 100), decimal=1, stepsize=1, suffix=" MHz")
+        self.lock_criteria_dsb = NewDoubleSpinBox(range=(0, 100), decimal=1, suffix=" MHz")
         self.lock_criteria_dsb.valueChanged[float].connect(lambda val, text="lock criteria": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.lock_criteria_dsb, 1, 3)
 
         self.scan_box.frame.addWidget(qt.QLabel("RMS Length:"), 1, 4, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.rms_length_sb = newSpinBox(range=(0, 10000), stepsize=1, suffix=None)
+        self.rms_length_sb = NewSpinBox(range=(0, 10000), suffix=None)
         self.rms_length_sb.valueChanged[int].connect(lambda val, text="RMS length": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.rms_length_sb, 1, 5)
 
         self.scan_box.frame.addWidget(qt.QLabel("Display per:"), 1, 6, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.disp_rate_sb = newSpinBox(range=(5, 10000), stepsize=1, suffix=" Cycles")
+        self.disp_rate_sb = NewSpinBox(range=(5, 10000), suffix=" Cycles")
         self.disp_rate_sb.valueChanged[int].connect(lambda val, text="display per": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.disp_rate_sb, 1, 7)
 
         self.scan_box.frame.addWidget(qt.QLabel("Average:"), 2, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.ave_rate_sb = newSpinBox(range=(1, 10000), stepsize=1, suffix=" run(s)")
+        self.ave_rate_sb = NewSpinBox(range=(1, 10000), suffix=" run(s)")
         self.ave_rate_sb.valueChanged[int].connect(lambda val, text="average": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.ave_rate_sb, 2, 1)
 
@@ -1109,19 +951,19 @@ class mainWindow(qt.QMainWindow):
         self.scan_box.frame.addWidget(self.baseline_chb, 2, 4)     
         
         self.scan_box.frame.addWidget(qt.QLabel("Counter ch:"), 3, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.counter_cb = newComboBox()
+        self.counter_cb = NewComboBox()
         self.counter_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
         self.counter_cb.currentTextChanged[str].connect(lambda val, text="counter channel": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.counter_cb, 3, 1, 1, 2)
 
         self.scan_box.frame.addWidget(qt.QLabel("Counter PFI:"), 3, 4, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.counter_pfi_cb = newComboBox()
+        self.counter_pfi_cb = NewComboBox()
         self.counter_pfi_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
         self.counter_pfi_cb.currentTextChanged[str].connect(lambda val, text="counter PFI line": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.counter_pfi_cb, 3, 5, 1, 2)
 
         self.scan_box.frame.addWidget(qt.QLabel("Trigger ch:"), 4, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.trigger_cb = newComboBox()
+        self.trigger_cb = NewComboBox()
         self.trigger_cb.setStyleSheet("QComboBox {padding-right: 0px;}")
         self.trigger_cb.currentTextChanged[str].connect(lambda val, text="trigger channel": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.trigger_cb, 4, 1, 1, 2)
@@ -1131,7 +973,7 @@ class mainWindow(qt.QMainWindow):
         self.scan_box.frame.addWidget(self.refresh_daq_pb, 4, 4, 1, 3)
 
         # third sub-box in this part, used for setting saving/loading control
-        self.file_box = newBox(layout_type="hbox")
+        self.file_box = NewBox(layout_type="hbox")
         self.file_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
         control_box.frame.addWidget(self.file_box)
 
@@ -1153,7 +995,7 @@ class mainWindow(qt.QMainWindow):
         self.file_box.frame.addWidget(self.load_setting_pb)
 
         # fourth sub-box in this part, used for tcp connection
-        self.tcp_box = newBox(layout_type="hbox")
+        self.tcp_box = NewBox(layout_type="hbox")
         self.tcp_box.setStyleSheet("QGroupBox {border: 1px solid #304249;}")
         control_box.frame.addWidget(self.tcp_box)
 
@@ -1169,7 +1011,7 @@ class mainWindow(qt.QMainWindow):
         self.tcp_restart_pb.clicked[bool].connect(lambda val: self.tcp_restart())
         self.tcp_box.frame.addWidget(self.tcp_restart_pb)
 
-        self.laser_box = newBox(layout_type="hbox")
+        self.laser_box = NewBox(layout_type="hbox")
         control_box.frame.addWidget(self.laser_box)
 
         # place the cavity column
@@ -1547,7 +1389,7 @@ class mainWindow(qt.QMainWindow):
         elif dict["type"] == "data":
             self.laser_list[dict["laser"]].global_freq_la.setText("{:.1f} MHz".format(dict["freq"]))
         else:
-            print("TCP thread return dict type not supported")
+            logging.warning("TCP thread return dict type not supported")
 
     def tcp_restart(self):
         self.tcp_stop()
@@ -1598,7 +1440,7 @@ if __name__ == '__main__':
     app = qt.QApplication(sys.argv)
     # screen = app.screens()
     # monitor_dpi = screen[0].physicalDotsPerInch()
-    monitor_dpi = 96
+    # monitor_dpi = 96
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
     prog = mainWindow(app)
     app.exec_()
