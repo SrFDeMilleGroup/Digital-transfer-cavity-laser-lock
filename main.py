@@ -751,7 +751,7 @@ class tcpThread(PyQt5.QtCore.QThread):
         self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_sock.bind((self.host, self.port))
         self.server_sock.listen()
-        logging.info("listening on", (self.host, self.port))
+        logging.info(f"listening on: ({self.host}, {self.port})")
         self.server_sock.setblocking(False)
         self.sel.register(self.server_sock, selectors.EVENT_READ, data=None)
 
