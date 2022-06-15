@@ -848,7 +848,7 @@ class mainWindow(qt.QMainWindow):
 
         cf = configparser.ConfigParser()
         cf.optionxform = str # make config key name case sensitive
-        cf.read("saved_settings\cavity_lock_setting.ini")
+        cf.read("saved_settings\config_latest.ini")
 
         self.update_daq_channel()
         self.update_config(cf)
@@ -1165,6 +1165,13 @@ class mainWindow(qt.QMainWindow):
             if overwrite == qt.QMessageBox.No:
                 return
 
+        config = self.compile_config()
+
+        configfile = open(file_name, "w")
+        config.write(configfile)
+        configfile.close()
+
+    def compile_config(self):
         config = configparser.ConfigParser(allow_no_value=True)
         config.optionxform = str
 
@@ -1195,9 +1202,7 @@ class mainWindow(qt.QMainWindow):
         for i, laser in enumerate(self.laser_list):
             config[f"Laser{i}"] = laser.save_config()
 
-        configfile = open(file_name, "w")
-        config.write(configfile)
-        configfile.close()
+        return config
 
     def toggle_more_ctrl(self):
         for i in [self.scan_box, self.file_box, self.tcp_box]:
@@ -1416,6 +1421,11 @@ class mainWindow(qt.QMainWindow):
 
     def closeEvent(self, event):
         if not self.active:
+            config = self.compile_config()
+            configfile = open("saved_settings\config_latest.ini", "w")
+            config.write(configfile)
+            configfile.close()
+
             super().closeEvent(event)
 
         else:
@@ -1425,6 +1435,11 @@ class mainWindow(qt.QMainWindow):
                                 qt.QMessageBox.Yes | qt.QMessageBox.No,
                                 qt.QMessageBox.No)
             if ans == qt.QMessageBox.Yes:
+                config = self.compile_config()
+                configfile = open("saved_settings\config_latest.ini", "w")
+                config.write(configfile)
+                configfile.close()
+
                 super().closeEvent(event)
             else:
                 event.ignore()

@@ -3,3 +3,7 @@ __pycache__/
 test.py
 saved_settings/
 logging/
+
+!config_latest.ini
+
+!*/
