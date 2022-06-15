@@ -594,7 +594,7 @@ class daqThread(PyQt5.QtCore.QThread):
 
     # initialize ai_task, which will handle analog read for all ai channels
     def ai_task_init(self):
-        self.ai_task = nidaqmx.Task("ai task"+time.strftime("%Y%m%d_%H%M%S"))
+        self.ai_task = nidaqmx.Task("ai task "+time.strftime("%Y%m%d_%H%M%S"))
         # add cavity ai channel to this task
         self.ai_task.ai_channels.add_ai_voltage_chan(self.parent.cavity.config["daq ai"], min_val=-0.5, max_val=1.2, units=nidaqmx.constants.VoltageUnits.VOLTS)
         # add laser ai channels to this task
@@ -611,7 +611,7 @@ class daqThread(PyQt5.QtCore.QThread):
 
     # initialize cavity_ao_task
     def cavity_ao_task_init(self):
-        self.cavity_ao_task = nidaqmx.Task("cavity ao task"+time.strftime("%Y%m%d_%H%M%S"))
+        self.cavity_ao_task = nidaqmx.Task("cavity ao task "+time.strftime("%Y%m%d_%H%M%S"))
         # add cavity ao channel to this task
         cavity_ao_ch = self.cavity_ao_task.ao_channels.add_ao_voltage_chan(self.parent.cavity.config["daq ao"], min_val=-2.0, max_val=6.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
         # to avoid error200018
@@ -633,7 +633,7 @@ class daqThread(PyQt5.QtCore.QThread):
 
     # initialize laser_ao_task, this task handles ao channel of all lasers
     def laser_ao_task_init(self):
-        self.laser_ao_task = nidaqmx.Task("laser ao task"+time.strftime("%Y%m%d_%H%M%S"))
+        self.laser_ao_task = nidaqmx.Task("laser ao task "+time.strftime("%Y%m%d_%H%M%S"))
         # add laser ao channel to this task
         for laser in self.parent.laser_list:
             self.laser_ao_task.ao_channels.add_ao_voltage_chan(laser.config["daq ao"], min_val=-2.0, max_val=2.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
@@ -641,13 +641,13 @@ class daqThread(PyQt5.QtCore.QThread):
 
     # initialize a do task, it will be used to trigger the counter
     def do_task_init(self):
-        self.do_task = nidaqmx.Task("do task"+time.strftime("%Y%m%d_%H%M%S"))
+        self.do_task = nidaqmx.Task("do task "+time.strftime("%Y%m%d_%H%M%S"))
         self.do_task.do_channels.add_do_chan(self.parent.config["trigger channel"])
         # no sample clock timing or trigger is specified, this task is running in "on demand" mode.
 
     # initialize a counter task, it will be used as the clock for ai_task and cavity_ao_task
     def counter_task_init(self):
-        self.counter_task = nidaqmx.Task("counter task"+time.strftime("%Y%m%d_%H%M%S"))
+        self.counter_task = nidaqmx.Task("counter task "+time.strftime("%Y%m%d_%H%M%S"))
         self.counter_task.co_channels.add_co_pulse_chan_freq(
                                                             counter=self.parent.config["counter channel"],
                                                             units=nidaqmx.constants.FrequencyUnits.HZ,
