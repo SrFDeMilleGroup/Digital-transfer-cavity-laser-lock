@@ -21,7 +21,7 @@ import struct
 import ctypes
 import h5py
 
-from widgets import NewBox, NewComboBox, NewDoubleSpinBox, NewPlot, NewScrollArea, NewSpinBox, hline, pt_to_px, ScientificDoubleSpinBox
+from widgets import NewBox, NewComboBox, NewDoubleSpinBox, NewPlot, NewScrollArea, NewSpinBox, hLine, pt_to_px, ScientificDoubleSpinBox
 
 
 # the base class for cavityColumn class and laserColumn class
@@ -46,7 +46,7 @@ class abstractLaserColumn(qt.QGroupBox):
         peak_box = NewBox(layout_type="form")
         self.frame.addWidget(peak_box)
 
-        self.peak_height_dsb = NewDoubleSpinBox(range=(0, 10), decimal=3, suffix=" V")
+        self.peak_height_dsb = NewDoubleSpinBox(range=(0, 10), decimals=3, suffix=" V")
         self.peak_height_dsb.valueChanged[float].connect(lambda val, text="peak height": self.update_config_elem(text, val))
         peak_box.frame.addRow("Peak height:", self.peak_height_dsb)
 
@@ -54,14 +54,14 @@ class abstractLaserColumn(qt.QGroupBox):
         self.peak_width_sb.valueChanged[int].connect(lambda val, text="peak width": self.update_config_elem(text, val))
         peak_box.frame.addRow("Peak width:", self.peak_width_sb)
 
-        self.frame.addWidget(hline(), alignment = PyQt5.QtCore.Qt.AlignHCenter)
+        self.frame.addWidget(hLine(), alignment = PyQt5.QtCore.Qt.AlignHCenter)
 
     # place a box and layout for frequency widgets, which will be added later in cavityColumn and laserColumn class
     def place_freq_box(self):
         self.freq_box = NewBox(layout_type="form")
         self.frame.addWidget(self.freq_box)
 
-        self.frame.addWidget(hline(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
+        self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
 
     # place PID parameter widgets
     def place_pid_box(self):
@@ -69,7 +69,7 @@ class abstractLaserColumn(qt.QGroupBox):
         self.frame.addWidget(pid_box)
 
         # proportional feedback
-        self.kp_dsb = NewDoubleSpinBox(range=(-100, 100), decimal=2, suffix=None)
+        self.kp_dsb = ScientificDoubleSpinBox(range=(-100, 100), decimals=2, suffix=None)
         self.kp_dsb.valueChanged[float].connect(lambda val, text="kp": self.update_config_elem(text, val))
 
         self.kp_chb = qt.QCheckBox()
@@ -82,7 +82,7 @@ class abstractLaserColumn(qt.QGroupBox):
         pid_box.frame.addRow("KP:", kp_box)
 
         # integral feedback
-        self.ki_dsb = NewDoubleSpinBox(range=(-100, 100), decimal=2, suffix=None)
+        self.ki_dsb = ScientificDoubleSpinBox(range=(-100, 100), decimals=2, suffix=None)
         self.ki_dsb.valueChanged[float].connect(lambda val, text="ki": self.update_config_elem(text, val))
 
         self.ki_chb = qt.QCheckBox()
@@ -95,7 +95,7 @@ class abstractLaserColumn(qt.QGroupBox):
         pid_box.frame.addRow("KI:", ki_box)
 
         # derivative feedback
-        self.kd_dsb = NewDoubleSpinBox(range=(-100, 100), decimal=2, suffix=None)
+        self.kd_dsb = ScientificDoubleSpinBox(range=(-100, 100), decimals=2, suffix=None)
         self.kd_dsb.valueChanged[float].connect(lambda val, text="kd": self.update_config_elem(text, val))
 
         self.kd_chb = qt.QCheckBox()
@@ -107,18 +107,18 @@ class abstractLaserColumn(qt.QGroupBox):
         kd_box.frame.addWidget(self.kd_chb, alignment = PyQt5.QtCore.Qt.AlignRight)
         pid_box.frame.addRow("KD:", kd_box)
 
-        self.frame.addWidget(hline(), alignment = PyQt5.QtCore.Qt.AlignHCenter)
+        self.frame.addWidget(hLine(), alignment = PyQt5.QtCore.Qt.AlignHCenter)
 
     # place widgets related to DAQ analog output voltage and laser frequency noise
     def place_voltage_box(self):
         voltage_box = NewBox(layout_type="form")
         self.frame.addWidget(voltage_box)
 
-        self.offset_dsb = NewDoubleSpinBox(range=(-10, 10), decimal=2, suffix=" V")
+        self.offset_dsb = NewDoubleSpinBox(range=(-10, 10), decimals=2, suffix=" V")
         self.offset_dsb.valueChanged[float].connect(lambda val, text="offset": self.update_config_elem(text, val))
         voltage_box.frame.addRow("Offset:", self.offset_dsb)
 
-        self.limit_dsb = NewDoubleSpinBox(range=(-10, 10), decimal=3, suffix=" V")
+        self.limit_dsb = NewDoubleSpinBox(range=(-10, 10), decimals=3, suffix=" V")
         self.limit_dsb.valueChanged[float].connect(lambda val, text="limit": self.update_config_elem(text, val))
         voltage_box.frame.addRow("Limit:", self.limit_dsb)
 
@@ -132,7 +132,7 @@ class abstractLaserColumn(qt.QGroupBox):
         self.locked_la.setStyleSheet("QLabel{background: #304249}")
         voltage_box.frame.addRow("Locked:", self.locked_la)
 
-        self.frame.addWidget(hline(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
+        self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
 
     # place DAQ channel and wavenumber widgets
     def place_daq_box(self):
@@ -151,12 +151,12 @@ class abstractLaserColumn(qt.QGroupBox):
         self.daq_out_cb.currentTextChanged[str].connect(lambda val, text="daq ao": self.update_config_elem(text, val))
         daq_box.frame.addRow("DAQ ao:", self.daq_out_cb)
 
-        self.wavenum_dsb = NewDoubleSpinBox(range=(0, 20000), decimal=1, suffix="  1/cm")
+        self.wavenum_dsb = NewDoubleSpinBox(range=(0, 20000), decimals=1, suffix="  1/cm")
         self.wavenum_dsb.setMaximumWidth(pt_to_px(74))
         self.wavenum_dsb.valueChanged[float].connect(lambda val, text="wavenumber": self.update_config_elem(text, val))
         daq_box.frame.addRow("Wave #:", self.wavenum_dsb)
 
-        self.frame.addWidget(hline(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
+        self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
 
     def place_clear_box(self):
         clear_box = NewBox(layout_type="grid")
@@ -272,7 +272,7 @@ class cavityColumn(abstractLaserColumn):
         la = qt.QLabel("Cavity/HeNe")
         la.setStyleSheet("QLabel{font: 16pt;}")
         self.frame.addWidget(la, alignment=PyQt5.QtCore.Qt.AlignHCenter)
-        # self.frame.addWidget(hline(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
+        # self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
 
     def place_freq_widget(self):
         # position of the first peak
@@ -284,7 +284,7 @@ class cavityColumn(abstractLaserColumn):
         self.freq_box.frame.addRow("Pk-pk sep.:", self.peak_sep_la)
 
         # setpoint of the first HeNe peak
-        self.setpoint_dsb = NewDoubleSpinBox(range=(0, 100), decimal=2, suffix=" ms")
+        self.setpoint_dsb = NewDoubleSpinBox(range=(0, 100), decimals=2, suffix=" ms")
         self.setpoint_dsb.valueChanged[float].connect(lambda val, text="set point": self.update_config_elem(text, val))
         self.freq_box.frame.addRow("Set point:", self.setpoint_dsb)
 
@@ -360,7 +360,7 @@ class laserColumn(abstractLaserColumn):
         global_box.frame.addWidget(self.global_rb, alignment=PyQt5.QtCore.Qt.AlignRight)
         self.freq_box.frame.addRow("G. F.:", global_box)
 
-        self.local_freq_dsb = NewDoubleSpinBox(range=(0, 1500), decimal=1, suffix=" MHz")
+        self.local_freq_dsb = NewDoubleSpinBox(range=(0, 1500), decimals=1, suffix=" MHz")
         self.local_freq_dsb.setToolTip("Local Frequency")
         self.local_freq_dsb.valueChanged[float].connect(lambda val, text="local freq": self.update_config_elem(text, val))
         self.local_rb = qt.QRadioButton()
@@ -900,17 +900,17 @@ class mainWindow(qt.QMainWindow):
         control_box.frame.addWidget(self.scan_box)
 
         self.scan_box.frame.addWidget(qt.QLabel("Scan amp:"), 0, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.scan_amp_dsb = NewDoubleSpinBox(range=(0, 10), decimal=2, suffix=" V")
+        self.scan_amp_dsb = NewDoubleSpinBox(range=(0, 10), decimals=2, suffix=" V")
         self.scan_amp_dsb.valueChanged[float].connect(lambda val, text="scan amp": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.scan_amp_dsb, 0, 1)
 
         self.scan_box.frame.addWidget(qt.QLabel("Scan time:"), 0, 2, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.scan_time_dsb = NewDoubleSpinBox(range=(0, 100), decimal=1, suffix=" ms")
+        self.scan_time_dsb = NewDoubleSpinBox(range=(0, 100), decimals=1, suffix=" ms")
         self.scan_time_dsb.valueChanged[float].connect(lambda val, text="scan time": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.scan_time_dsb, 0, 3)
 
         self.scan_box.frame.addWidget(qt.QLabel("Scan ignore:"), 0, 4, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.scan_ignore_dsb = NewDoubleSpinBox(range=(0, 100), decimal=2, suffix=" ms")
+        self.scan_ignore_dsb = NewDoubleSpinBox(range=(0, 100), decimals=2, suffix=" ms")
         self.scan_ignore_dsb.valueChanged[float].connect(lambda val, text="scan ignore": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.scan_ignore_dsb, 0, 5)
 
@@ -920,12 +920,12 @@ class mainWindow(qt.QMainWindow):
         self.scan_box.frame.addWidget(self.samp_rate_sb, 0, 7)
 
         self.scan_box.frame.addWidget(qt.QLabel("Cavity FSR:"), 1, 0, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.cavity_fsr_dsb = NewDoubleSpinBox(range=(0, 10000), decimal=1, suffix=" MHz")
+        self.cavity_fsr_dsb = NewDoubleSpinBox(range=(0, 10000), decimals=1, suffix=" MHz")
         self.cavity_fsr_dsb.valueChanged[float].connect(lambda val, text="cavity FSR": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.cavity_fsr_dsb, 1, 1)
 
         self.scan_box.frame.addWidget(qt.QLabel("Lock Criteria:"), 1, 2, alignment = PyQt5.QtCore.Qt.AlignRight)
-        self.lock_criteria_dsb = NewDoubleSpinBox(range=(0, 100), decimal=1, suffix=" MHz")
+        self.lock_criteria_dsb = NewDoubleSpinBox(range=(0, 100), decimals=1, suffix=" MHz")
         self.lock_criteria_dsb.valueChanged[float].connect(lambda val, text="lock criteria": self.update_config_elem(text, val))
         self.scan_box.frame.addWidget(self.lock_criteria_dsb, 1, 3)
 
