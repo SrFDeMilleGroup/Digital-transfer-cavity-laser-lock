@@ -806,7 +806,7 @@ class tcpThread(PyQt5.QtCore.QThread):
 
     def accept_wrapper(self, sock):
         conn, addr = sock.accept()  # Should be ready to read
-        logging.info("accepted connection from", addr)
+        logging.info(f"accepted connection from: {addr}")
         conn.setblocking(False)
         self.sel.register(conn, selectors.EVENT_READ, data=123) # In this application, 'data' keyword can be anything but None
         return_dict = {}
