@@ -275,7 +275,7 @@ class NewScrollArea(qt.QGroupBox):
         outer_layout.setContentsMargins(0,0,0,0)
         self.setLayout(outer_layout)
 
-        self.scroll = qt.QNewScrollArea()
+        self.scroll = qt.QScrollArea()
         self.scroll.setWidgetResizable(True)
         if scroll_type == "vertical":
             self.scroll.horizontalScrollBar().setEnabled(False)
