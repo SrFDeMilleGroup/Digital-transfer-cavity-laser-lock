@@ -529,15 +529,24 @@ class daqThread(PyQt5.QtCore.QThread):
                         self.laser_peak_found[i] = True
                         # choose a frequency setpoint source
                         freq_setpoint = laser.config["global freq"] if laser.config["freq source"] == "global" else laser.config["local freq"]
+                        
+                        # calculate laser frequency error signal, use the peak that's closest to the setpoint
+                        laser_err = freq_setpoint - (laser_peak*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
+                        laser_err = np.amin(abs(laser_err))
+
+                        # below is the old calculated error using the first peak
                         # calculate laser frequency error signal, use the position of the first peak
-                        laser_err = freq_setpoint - (laser_peak[0]*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
+                        # laser_err = freq_setpoint - (laser_peak[0]*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
+                        
                         # calculate laser PID feedback volatge, use "scan time" for an approximate loop time
                         laser_feedback = self.laser_last_feedback[i] + \
                                          (laser_err-self.laser_last_err[i][1])*laser.config["kp"]*laser.config["kp on"] + \
                                          laser_err*laser.config["ki"]*laser.config["ki on"]*self.parent.config["scan time"]/1000 + \
                                          (laser_err+self.laser_last_err[i][0]-2*self.laser_last_err[i][1])*laser.config["kd"]*laser.config["kd on"]/(self.parent.config["scan time"]/1000)
+                        
                         # coerce laser feedbak voltage to avoid big jump
                         laser_feedback = np.clip(laser_feedback, self.laser_last_feedback[i]-self.parent.cavity.config["limit"], self.laser_last_feedback[i]+self.parent.cavity.config["limit"])
+                        
                         # check if laser feedback voltage is NaN, use feedback voltage from last cycle if it is
                         if not np.isnan(laser_feedback):
                             self.laser_last_feedback[i] = laser_feedback
@@ -665,6 +674,11 @@ class daqThread(PyQt5.QtCore.QThread):
             self.laser_ao_task.write(self.laser_output)
         except nidaqmx.errors.DaqError as err:
             logging.error(f"A DAQ error happened at laser ao channels \n{err}")
+
+            # Abort task, see https://zone.ni.com/reference/en-XX/help/370466AH-01/mxcncpts/taskstatemodel/
+            self.laser_ao_task.control(nidaqmx.constants.TaskMode.TASK_ABORT)
+            # write to and and restart task
+            self.laser_ao_task.write(self.laser_output, auto_start=True)
 
         try:
             # update cavity scanning voltage
