@@ -360,7 +360,7 @@ class laserColumn(abstractLaserColumn):
         global_box.frame.addWidget(self.global_rb, alignment=PyQt5.QtCore.Qt.AlignRight)
         self.freq_box.frame.addRow("G. F.:", global_box)
 
-        self.local_freq_dsb = NewDoubleSpinBox(range=(0, 1500), decimals=1, suffix=" MHz")
+        self.local_freq_dsb = NewDoubleSpinBox(range=(-750, 1500), decimals=1, suffix=" MHz")
         self.local_freq_dsb.setToolTip("Local Frequency")
         self.local_freq_dsb.valueChanged[float].connect(lambda val, text="local freq": self.update_config_elem(text, val))
         self.local_rb = qt.QRadioButton()
@@ -529,15 +529,24 @@ class daqThread(PyQt5.QtCore.QThread):
                         self.laser_peak_found[i] = True
                         # choose a frequency setpoint source
                         freq_setpoint = laser.config["global freq"] if laser.config["freq source"] == "global" else laser.config["local freq"]
+                        
+                        # calculate laser frequency error signal, use the peak that's closest to the setpoint
+                        laser_err = freq_setpoint - (laser_peak*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
+                        laser_err = np.amin(abs(laser_err))
+
+                        # below is the old calculated error using the first peak
                         # calculate laser frequency error signal, use the position of the first peak
-                        laser_err = freq_setpoint - (laser_peak[0]*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
+                        # laser_err = freq_setpoint - (laser_peak[0]*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
+                        
                         # calculate laser PID feedback volatge, use "scan time" for an approximate loop time
                         laser_feedback = self.laser_last_feedback[i] + \
                                          (laser_err-self.laser_last_err[i][1])*laser.config["kp"]*laser.config["kp on"] + \
                                          laser_err*laser.config["ki"]*laser.config["ki on"]*self.parent.config["scan time"]/1000 + \
                                          (laser_err+self.laser_last_err[i][0]-2*self.laser_last_err[i][1])*laser.config["kd"]*laser.config["kd on"]/(self.parent.config["scan time"]/1000)
+                        
                         # coerce laser feedbak voltage to avoid big jump
                         laser_feedback = np.clip(laser_feedback, self.laser_last_feedback[i]-self.parent.cavity.config["limit"], self.laser_last_feedback[i]+self.parent.cavity.config["limit"])
+                        
                         # check if laser feedback voltage is NaN, use feedback voltage from last cycle if it is
                         if not np.isnan(laser_feedback):
                             self.laser_last_feedback[i] = laser_feedback
@@ -841,6 +850,9 @@ class mainWindow(qt.QMainWindow):
         # middle part of this GUI, a box for control widgets
         ctrl_box = self.place_controls()
         self.box.frame.addWidget(ctrl_box, 1, 0)
+
+        # hide some control boxes
+        self.toggle_more_ctrl()
 
         self.setCentralWidget(self.box)
         self.resize(pt_to_px(540), pt_to_px(750))
