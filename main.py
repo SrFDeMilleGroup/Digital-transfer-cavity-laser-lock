@@ -360,7 +360,7 @@ class laserColumn(abstractLaserColumn):
         global_box.frame.addWidget(self.global_rb, alignment=PyQt5.QtCore.Qt.AlignRight)
         self.freq_box.frame.addRow("G. F.:", global_box)
 
-        self.local_freq_dsb = NewDoubleSpinBox(range=(0, 1500), decimals=1, suffix=" MHz")
+        self.local_freq_dsb = NewDoubleSpinBox(range=(-750, 1500), decimals=1, suffix=" MHz")
         self.local_freq_dsb.setToolTip("Local Frequency")
         self.local_freq_dsb.valueChanged[float].connect(lambda val, text="local freq": self.update_config_elem(text, val))
         self.local_rb = qt.QRadioButton()
@@ -675,11 +675,6 @@ class daqThread(PyQt5.QtCore.QThread):
         except nidaqmx.errors.DaqError as err:
             logging.error(f"A DAQ error happened at laser ao channels \n{err}")
 
-            # Abort task, see https://zone.ni.com/reference/en-XX/help/370466AH-01/mxcncpts/taskstatemodel/
-            self.laser_ao_task.control(nidaqmx.constants.TaskMode.TASK_ABORT)
-            # write to and and restart task
-            self.laser_ao_task.write(self.laser_output, auto_start=True)
-
         try:
             # update cavity scanning voltage
             self.cavity_ao_task.write(self.cavity_scan + self.cavity_output)
@@ -855,6 +850,9 @@ class mainWindow(qt.QMainWindow):
         # middle part of this GUI, a box for control widgets
         ctrl_box = self.place_controls()
         self.box.frame.addWidget(ctrl_box, 1, 0)
+
+        # hide some control boxes
+        self.toggle_more_ctrl()
 
         self.setCentralWidget(self.box)
         self.resize(pt_to_px(540), pt_to_px(750))

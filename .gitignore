@@ -1,7 +1,9 @@
-# Byte-compiled / optimized / DLL files
 __pycache__/
+widgets/__pycache__/*
 test.py
-saved_settings/
-logging/
+saved_settings/*
+logging/*
 
 !saved_settings/config_latest.ini
+!saved_settings/cavity_lock_setting.ini
+!logging/ReadMe.txt
