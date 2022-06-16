@@ -532,7 +532,8 @@ class daqThread(PyQt5.QtCore.QThread):
                         
                         # calculate laser frequency error signal, use the peak that's closest to the setpoint
                         laser_err = freq_setpoint - (laser_peak*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
-                        laser_err = np.amin(abs(laser_err))
+                        min_pos = np.argmin(abs(laser_err))
+                        laser_err = laser_err[min_pos]
 
                         # below is the old calculated error using the first peak
                         # calculate laser frequency error signal, use the position of the first peak
