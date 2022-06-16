@@ -543,8 +543,10 @@ class daqThread(PyQt5.QtCore.QThread):
                                          (laser_err-self.laser_last_err[i][1])*laser.config["kp"]*laser.config["kp on"] + \
                                          laser_err*laser.config["ki"]*laser.config["ki on"]*self.parent.config["scan time"]/1000 + \
                                          (laser_err+self.laser_last_err[i][0]-2*self.laser_last_err[i][1])*laser.config["kd"]*laser.config["kd on"]/(self.parent.config["scan time"]/1000)
+                        
                         # coerce laser feedbak voltage to avoid big jump
                         laser_feedback = np.clip(laser_feedback, self.laser_last_feedback[i]-self.parent.cavity.config["limit"], self.laser_last_feedback[i]+self.parent.cavity.config["limit"])
+                        
                         # check if laser feedback voltage is NaN, use feedback voltage from last cycle if it is
                         if not np.isnan(laser_feedback):
                             self.laser_last_feedback[i] = laser_feedback
