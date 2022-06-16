@@ -851,9 +851,6 @@ class mainWindow(qt.QMainWindow):
         ctrl_box = self.place_controls()
         self.box.frame.addWidget(ctrl_box, 1, 0)
 
-        # hide some control boxes
-        self.toggle_more_ctrl()
-
         self.setCentralWidget(self.box)
         self.resize(pt_to_px(540), pt_to_px(750))
         self.show()
@@ -876,6 +873,9 @@ class mainWindow(qt.QMainWindow):
         # used to save feedback voltage for daq_thread
         self.cavity_last_feedback = 0
         self.laser_last_feedback = np.zeros(len(self.laser_list), dtype=np.float64)
+
+        # hide some control boxes
+        self.toggle_more_ctrl()
 
     # place controls in the middle part of this GUI
     def place_controls(self):
