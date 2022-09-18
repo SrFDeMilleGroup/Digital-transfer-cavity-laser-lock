@@ -646,7 +646,7 @@ class daqThread(PyQt5.QtCore.QThread):
         self.laser_ao_task = nidaqmx.Task("laser ao task "+time.strftime("%Y%m%d_%H%M%S"))
         # add laser ao channel to this task
         for laser in self.parent.laser_list:
-            self.laser_ao_task.ao_channels.add_ao_voltage_chan(laser.config["daq ao"], min_val=-2.0, max_val=2.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+            self.laser_ao_task.ao_channels.add_ao_voltage_chan(laser.config["daq ao"], min_val=0.0, max_val=4.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
         # no sample clock timing or trigger is specified, this task is running in "on demand" mode.
 
     # initialize a do task, it will be used to trigger the counter
