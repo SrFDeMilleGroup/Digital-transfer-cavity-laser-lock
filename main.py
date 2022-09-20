@@ -464,6 +464,13 @@ class daqThread(PyQt5.QtCore.QThread):
         self.do_task.start()
 
         while self.parent.active:
+            # Thanks O. Grasdijk for pointing this out,
+            # nidaqmx.Task.read() uses windows timer for timing, higher timer resolution can improve loop performance
+            # default resolution can vary in differnt computers
+            current_res = ctypes.c_ulong()
+            # units are 100 ns, set windows timer resolution to be 1 ms.
+            ctypes.windll.ntdll.NtSetTimerResolution(10000, True, ctypes.byref(current_res))
+
             num_run = self.parent.config["average"]
             for i in range(num_run):
                 # trigger counter, to start AI/AO for the first cycle
@@ -623,7 +630,7 @@ class daqThread(PyQt5.QtCore.QThread):
     def cavity_ao_task_init(self):
         self.cavity_ao_task = nidaqmx.Task("cavity ao task "+time.strftime("%Y%m%d_%H%M%S"))
         # add cavity ao channel to this task
-        cavity_ao_ch = self.cavity_ao_task.ao_channels.add_ao_voltage_chan(self.parent.cavity.config["daq ao"], min_val=-2.0, max_val=6.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+        cavity_ao_ch = self.cavity_ao_task.ao_channels.add_ao_voltage_chan(self.parent.cavity.config["daq ao"], min_val=-2.0, max_val=10.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
         # to avoid error200018
         # https://forums.ni.com/t5/Multifunction-DAQ/poor-analog-output-performance-error-200018/td-p/1525156?profile.language=en
         cavity_ao_ch.ao_data_xfer_mech = nidaqmx.constants.DataTransferActiveTransferMode.DMA
@@ -1458,12 +1465,6 @@ class mainWindow(qt.QMainWindow):
                 event.ignore()
 
 if __name__ == '__main__':
-    # Thanks O. Grasdijk for pointing this out,
-    # nidaqmx.Task.read() uses windows timer for timing, higher timer resolution can improve loop performance
-    # default resolution can vary in differnt computers
-    current_res = ctypes.c_ulong()
-    # units are 100 ns, set windows timer resolution to be 1 ms.
-    ctypes.windll.ntdll.NtSetTimerResolution(10000, True, ctypes.byref(current_res))
 
     app = qt.QApplication(sys.argv)
     # screen = app.screens()
