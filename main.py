@@ -269,7 +269,7 @@ class cavityColumn(abstractLaserColumn):
 
     # place "Cavity/HeNe" label
     def place_label(self):
-        la = qt.QLabel("Cavity/HeNe")
+        la = qt.QLabel("Cavity/1550nm")
         la.setStyleSheet("QLabel{font: 16pt;}")
         self.frame.addWidget(la, alignment=PyQt5.QtCore.Qt.AlignHCenter)
         # self.frame.addWidget(hLine(), alignment=PyQt5.QtCore.Qt.AlignHCenter)
@@ -429,7 +429,10 @@ class daqThread(PyQt5.QtCore.QThread):
         self.samp_rate = self.parent.config["sampling rate"]
         self.dt = 1.0/self.samp_rate
         # number of samples to write/read
-        self.samp_num = round(self.parent.config["scan time"]/1000.0*self.samp_rate)
+
+        self.rampupsamp_num = round((self.parent.config["ramp up time"])/1000.0*self.samp_rate)
+        self.scansamp_num = round((self.parent.config["scan time"])/1000.0*self.samp_rate)
+        self.samp_num = self.rampupsamp_num + self.scansamp_num
         self.laser_num = len(self.parent.laser_list)
 
         # initialize all DAQ tasks
@@ -447,14 +450,13 @@ class daqThread(PyQt5.QtCore.QThread):
         for i, laser in enumerate(self.parent.laser_list):
             self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
 
-        self.cavity_scan = np.linspace(self.parent.config["scan amp"], 0, self.samp_num, dtype=np.float64) # cavity scanning voltage, reversed sawtooth wave
+        self.cavity_scan = np.concatenate((np.linspace(0, self.parent.config["scan amp"], self.rampupsamp_num, dtype=np.float64), np.linspace(self.parent.config["scan amp"], 0, self.scansamp_num, dtype=np.float64))) # cavity scanning voltage, reversed sawtooth wave
         self.cavity_last_err = np.zeros(2, dtype=np.float64) # save frequency errors in laset two cycles, used for PID calculation
         self.cavity_last_feedback = self.parent.cavity_last_feedback # use feedback voltage from last run as the initial feedback voltage of this run, to avoid laser freq jump
         self.cavity_output = self.parent.cavity.config["offset"] + self.cavity_last_feedback
         self.cavity_peak_found = False
 
-        self.laser_ao_task.write(self.laser_output)
-        self.cavity_ao_task.write(self.cavity_scan + self.cavity_output)
+        self.ao_task_write()
 
         # start all tasks
         self.ai_task.start()
@@ -515,8 +517,8 @@ class daqThread(PyQt5.QtCore.QThread):
                 # calculate cavity PID feedback voltage, use "scan time" for an approximate loop time
                 cavity_feedback = self.cavity_last_feedback + \
                                   (cavity_err-self.cavity_last_err[1])*self.parent.cavity.config["kp"]*self.parent.cavity.config["kp on"] + \
-                                  cavity_err*self.parent.cavity.config["ki"]*self.parent.cavity.config["ki on"]*self.parent.config["scan time"]/1000 + \
-                                  (cavity_err+self.cavity_last_err[0]-2*self.cavity_last_err[1])*self.parent.cavity.config["kd"]*self.parent.cavity.config["kd on"]/(self.parent.config["scan time"]/1000)
+                                  cavity_err*self.parent.cavity.config["ki"]*self.parent.cavity.config["ki on"]*(self.parent.config["scan time"]+self.parent.config["ramp up time"])/1000 + \
+                                  (cavity_err+self.cavity_last_err[0]-2*self.cavity_last_err[1])*self.parent.cavity.config["kd"]*self.parent.cavity.config["kd on"]/((self.parent.config["scan time"]+self.parent.config["ramp up time"])/1000)
                 # coerce cavity feedbak voltage to avoid big jump
                 cavity_feedback = np.clip(cavity_feedback, self.cavity_last_feedback-self.parent.cavity.config["limit"], self.cavity_last_feedback+self.parent.cavity.config["limit"])
                 # check if cavity feedback voltage is NaN, use feedback voltage from last cycle if it is
@@ -549,8 +551,8 @@ class daqThread(PyQt5.QtCore.QThread):
                         # calculate laser PID feedback volatge, use "scan time" for an approximate loop time
                         laser_feedback = self.laser_last_feedback[i] + \
                                          (laser_err-self.laser_last_err[i][1])*laser.config["kp"]*laser.config["kp on"] + \
-                                         laser_err*laser.config["ki"]*laser.config["ki on"]*self.parent.config["scan time"]/1000 + \
-                                         (laser_err+self.laser_last_err[i][0]-2*self.laser_last_err[i][1])*laser.config["kd"]*laser.config["kd on"]/(self.parent.config["scan time"]/1000)
+                                         laser_err*laser.config["ki"]*laser.config["ki on"]*(self.parent.config["scan time"]+self.parent.config["ramp up time"])/1000 + \
+                                         (laser_err+self.laser_last_err[i][0]-2*self.laser_last_err[i][1])*laser.config["kd"]*laser.config["kd on"]/((self.parent.config["scan time"]+self.parent.config["ramp up time"])/1000)
                         
                         # coerce laser feedbak voltage to avoid big jump
                         laser_feedback = np.clip(laser_feedback, self.laser_last_feedback[i]-self.parent.cavity.config["limit"], self.laser_last_feedback[i]+self.parent.cavity.config["limit"])
@@ -630,7 +632,7 @@ class daqThread(PyQt5.QtCore.QThread):
     def cavity_ao_task_init(self):
         self.cavity_ao_task = nidaqmx.Task("cavity ao task "+time.strftime("%Y%m%d_%H%M%S"))
         # add cavity ao channel to this task
-        cavity_ao_ch = self.cavity_ao_task.ao_channels.add_ao_voltage_chan(self.parent.cavity.config["daq ao"], min_val=-2.0, max_val=10.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+        cavity_ao_ch = self.cavity_ao_task.ao_channels.add_ao_voltage_chan(self.parent.cavity.config["daq ao"], min_val= self.parent.config["min cav ao"], max_val=self.parent.config["max cav ao"], units=nidaqmx.constants.VoltageUnits.VOLTS)
         # to avoid error200018
         # https://forums.ni.com/t5/Multifunction-DAQ/poor-analog-output-performance-error-200018/td-p/1525156?profile.language=en
         cavity_ao_ch.ao_data_xfer_mech = nidaqmx.constants.DataTransferActiveTransferMode.DMA
@@ -653,7 +655,7 @@ class daqThread(PyQt5.QtCore.QThread):
         self.laser_ao_task = nidaqmx.Task("laser ao task "+time.strftime("%Y%m%d_%H%M%S"))
         # add laser ao channel to this task
         for laser in self.parent.laser_list:
-            self.laser_ao_task.ao_channels.add_ao_voltage_chan(laser.config["daq ao"], min_val=0.0, max_val=4.0, units=nidaqmx.constants.VoltageUnits.VOLTS)
+            self.laser_ao_task.ao_channels.add_ao_voltage_chan(laser.config["daq ao"], min_val= self.parent.config["min laser ao"], max_val= self.parent.config["max laser ao"], units=nidaqmx.constants.VoltageUnits.VOLTS)
         # no sample clock timing or trigger is specified, this task is running in "on demand" mode.
 
     # initialize a do task, it will be used to trigger the counter
@@ -677,11 +679,18 @@ class daqThread(PyQt5.QtCore.QThread):
         self.counter_task.triggers.start_trigger.retriggerable = True
 
     def ao_task_write(self):
+        # check if laser feedback voltage exceeds limits allowed value set by user, and cap it to the allowed value if so
+        for i, laser in enumerate(self.parent.laser_list):  
+            self.laser_output[i] = np.clip(self.laser_output[i], self.parent.config["min laser ao"], self.parent.config["max laser ao"])
+
         try:
             # generate laser piezo feedback voltage from ao channels
             self.laser_ao_task.write(self.laser_output)
         except nidaqmx.errors.DaqError as err:
             logging.error(f"A DAQ error happened at laser ao channels \n{err}")
+
+        # check if cavity feedback voltage exceeds the limit allowed value set by user, and cap it to the allowed value if so
+        self.cavity_output = np.clip(self.cavity_output, self.parent.config["min cav ao"], self.parent.config["max cav ao"] - self.parent.config["scan amp"])
 
         try:
             # update cavity scanning voltage
@@ -1076,7 +1085,12 @@ class mainWindow(qt.QMainWindow):
         self.tcp_stop()
 
         self.config["scan amp"] = config["Setting"].getfloat("scan amp/V")
+        self.config["min cav ao"] = config["Setting"].getfloat("min cav ao/V")
+        self.config["max cav ao"] = config["Setting"].getfloat("max cav ao/V")
+        self.config["min laser ao"] = config["Setting"].getfloat("min laser ao/V")
+        self.config["max laser ao"] = config["Setting"].getfloat("max laser ao/V")
         self.config["scan time"] = config["Setting"].getfloat("scan time/ms")
+        self.config["ramp up time"] = config["Setting"].getfloat("ramp up time/ms")
         self.config["scan ignore"] = config["Setting"].getfloat("scan ignore/ms")
         self.config["sampling rate"] = config["Setting"].getint("sampling rate")
         self.config["cavity FSR"] = config["Setting"].getfloat("cavity FSR/MHz")
@@ -1197,7 +1211,12 @@ class mainWindow(qt.QMainWindow):
 
         config["Setting"] = {}
         config["Setting"]["scan amp/V"] = str(self.config["scan amp"])
+        config["Setting"]["min cav ao/V"] = str(self.config["min cav ao"])
+        config["Setting"]["max cav ao/V"] = str(self.config["max cav ao"])
+        config["Setting"]["min laser ao/V"] = str(self.config["min laser ao"])
+        config["Setting"]["max laser ao/V"] = str(self.config["max laser ao"])
         config["Setting"]["scan time/ms"] = str(self.config["scan time"])
+        config["Setting"]["ramp up time/ms"] = str(self.config["ramp up time"])
         config["Setting"]["scan ignore/ms"] = str(self.config["scan ignore"])
         config["Setting"]["sampling rate"] = str(self.config["sampling rate"])
         config["Setting"]["cavity FSR/MHz"] = str(self.config["cavity FSR"])
@@ -1259,10 +1278,13 @@ class mainWindow(qt.QMainWindow):
     @PyQt5.QtCore.pyqtSlot(dict)
     def feedback(self, dict):
         data_len = len(dict["cavity pd_data"])
-        self.cavity.scan_curve.setData(np.linspace(self.config["scan ignore"], self.config["scan time"], data_len), dict["cavity pd_data"])
+        self.cavity.scan_curve.setData(np.linspace(self.config["scan ignore"], self.config["scan time"]+self.config["ramp up time"], data_len), dict["cavity pd_data"])
         self.cavity.first_peak_la.setText("{:.2f} ms".format(self.config["scan ignore"]+dict["cavity first peak"]))
         self.cavity.peak_sep_la.setText("{:.2f} ms".format(dict["cavity pk sep"]))
-        self.cavity.daq_output_la.setText("{:.3f} V".format(dict["cavity output"]))
+        if dict["cavity output"] == self.config["min cav ao"] or dict["cavity output"] == self.config["max cav ao"]-self.config["scan amp"]:
+            self.cavity.daq_output_la.setText("{:.3f} V (CAPPED!!)".format(dict["cavity output"]))
+        else:
+            self.cavity.daq_output_la.setText("{:.3f} V".format(dict["cavity output"]))
         self.cavity_err_queue.append(dict["cavity error"])
         rms = np.std(self.cavity_err_queue)
         self.cavity.rms_width_la.setText("{:.2f} MHz".format(rms))
@@ -1278,8 +1300,11 @@ class mainWindow(qt.QMainWindow):
 
         act_freq = []
         for i, laser in enumerate(self.laser_list):
-            laser.scan_curve.setData(np.linspace(self.config["scan ignore"], self.config["scan time"], data_len), dict["laser pd_data"][i])
-            laser.daq_output_la.setText("{:.3f} V".format(dict["laser output"][i]))
+            laser.scan_curve.setData(np.linspace(self.config["scan ignore"], self.config["scan time"]+self.config["ramp up time"], data_len), dict["laser pd_data"][i])
+            if dict["laser output"][i] == self.config["min laser ao"] or dict["laser output"][i] == self.config["max laser ao"]:
+                laser.daq_output_la.setText("{:.3f} V (CAPPED!!)".format(dict["laser output"][i]))
+            else:
+                laser.daq_output_la.setText("{:.3f} V".format(dict["laser output"][i]))
             self.laser_err_list[i].append(dict["laser error"][i])
             freq_setpoint = laser.config["local freq"] if laser.config["freq source"] == "local" else laser.config["global freq"]
             act_freq.append(freq_setpoint-dict["laser error"][i] if dict["laser peak found"][i] else np.NaN)
