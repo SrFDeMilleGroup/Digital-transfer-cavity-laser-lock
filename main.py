@@ -151,7 +151,7 @@ class abstractLaserColumn(qt.QGroupBox):
         self.daq_out_cb.currentTextChanged[str].connect(lambda val, text="daq ao": self.update_config_elem(text, val))
         daq_box.frame.addRow("DAQ ao:", self.daq_out_cb)
 
-        self.wavenum_dsb = NewDoubleSpinBox(range=(0, 20000), decimals=1, suffix="  1/cm")
+        self.wavenum_dsb = NewDoubleSpinBox(range=(0, 200000), decimals=1, suffix="  1/cm")
         self.wavenum_dsb.setMaximumWidth(pt_to_px(74))
         self.wavenum_dsb.valueChanged[float].connect(lambda val, text="wavenumber": self.update_config_elem(text, val))
         daq_box.frame.addRow("Wave #:", self.wavenum_dsb)
@@ -807,6 +807,7 @@ class tcpThread(PyQt5.QtCore.QThread):
                                 # self.do_task.write([True, False]*20)
                             except Exception as err:
                                 logging.error(f"TCP Thread error: \n{err}")
+                                s.sendall(self.data[:10])
                             finally:
                                 self.data = self.data[10:]
                     else:
