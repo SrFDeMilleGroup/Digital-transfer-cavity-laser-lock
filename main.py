@@ -806,6 +806,7 @@ class tcpThread(PyQt5.QtCore.QThread):
                                 # self.do_task.write([True, False]*20)
                             except Exception as err:
                                 logging.error(f"TCP Thread error: \n{err}")
+                                s.sendall(self.data[:10])
                             finally:
                                 self.data = self.data[10:]
                     else:
