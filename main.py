@@ -506,12 +506,15 @@ class daqThread(PyQt5.QtCore.QThread):
             cavity_peaks, _ = signal.find_peaks(pd_data[0], height=self.parent.cavity.config["peak height"], width=self.parent.cavity.config["peak width"])
 
             # normally this frequency lock method requires two cavity scanning peaks
-            if len(cavity_peaks) == 2:
+            if len(cavity_peaks) in [2]:
                 self.cavity_peak_found = True
                 # convert the position of the first peak into unit ms
                 cavity_first_peak = cavity_peaks[0]*self.dt*1000
+
                 # convert the separation of peaks into unit ms
                 cavity_pk_sep = (cavity_peaks[1] - cavity_peaks[0])*self.dt*1000
+                # cavity_pk_sep = 2 # fix this here because we don't always find 2 peaks. And here we don't care about freq measureing accuracy 
+
                 # calculate cavity error signal in unit MHz
                 cavity_err = (self.parent.cavity.config["set point"] - self.parent.config["scan ignore"] - cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]
                 # calculate cavity PID feedback voltage, use "scan time" for an approximate loop time
@@ -816,6 +819,7 @@ class tcpThread(PyQt5.QtCore.QThread):
                                 # self.do_task.write([True, False]*20)
                             except Exception as err:
                                 logging.error(f"TCP Thread error: \n{err}")
+                                s.sendall(self.data[:10])
                             finally:
                                 self.data = self.data[10:]
                     else:
@@ -1280,7 +1284,7 @@ class mainWindow(qt.QMainWindow):
         data_len = len(dict["cavity pd_data"])
         self.cavity.scan_curve.setData(np.linspace(self.config["scan ignore"], self.config["scan time"]+self.config["ramp up time"], data_len), dict["cavity pd_data"])
         self.cavity.first_peak_la.setText("{:.2f} ms".format(self.config["scan ignore"]+dict["cavity first peak"]))
-        self.cavity.peak_sep_la.setText("{:.2f} ms".format(dict["cavity pk sep"]))
+        self.cavity.peak_sep_la.setText("{:.2f} ms (FIXED!)".format(dict["cavity pk sep"]))
         if dict["cavity output"] == self.config["min cav ao"] or dict["cavity output"] == self.config["max cav ao"]-self.config["scan amp"]:
             self.cavity.daq_output_la.setText("{:.3f} V (CAPPED!!)".format(dict["cavity output"]))
         else:
