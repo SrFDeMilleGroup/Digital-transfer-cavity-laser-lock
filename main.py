@@ -169,10 +169,12 @@ class abstractLaserColumn(qt.QGroupBox):
         in_ch = self.daq_in_cb.currentText()
         self.daq_in_cb.clear()
         # get available DAQ devices
-        dev_collect = nidaqmx.system._collections.device_collection.DeviceCollection()
+        # dev_collect = nidaqmx.system._collections.device_collection.DeviceCollection() # for nidaqmx version 0.7
+        dev_collect = nidaqmx.system.System.local().devices # for nidaqmx version 0.8
         for i in dev_collect.device_names:
             # get available AI channels for each DAQ device
-            ch_collect = nidaqmx.system._collections.physical_channel_collection.AIPhysicalChannelCollection(i)
+            # ch_collect = nidaqmx.system._collections.physical_channel_collection.AIPhysicalChannelCollection(i) # for nidaqmx version 0.7
+            ch_collect = nidaqmx.system.Device(i).ai_physical_chans # for nidaqmx version 0.8
             for j in ch_collect.channel_names:
                 # add available AI channels to comboBox option list
                 self.daq_in_cb.addItem(j)
@@ -182,7 +184,8 @@ class abstractLaserColumn(qt.QGroupBox):
         self.daq_out_cb.clear()
         for i in dev_collect.device_names:
             # get available AO channels for each DAQ device
-            ch_collect = nidaqmx.system._collections.physical_channel_collection.AOPhysicalChannelCollection(i)
+            # ch_collect = nidaqmx.system._collections.physical_channel_collection.AOPhysicalChannelCollection(i) # for nidaqmx version 0.7
+            ch_collect = nidaqmx.system.Device(i).ao_physical_chans # for nidaqmx version 0.8
             for j in ch_collect.channel_names:
                 # add available AO channels to comboBox option list
                 self.daq_out_cb.addItem(j)
@@ -1390,10 +1393,12 @@ class mainWindow(qt.QMainWindow):
         counter_ch = self.counter_cb.currentText()
         self.counter_cb.clear()
         # get available DAQ devices
-        dev_collect = nidaqmx.system._collections.device_collection.DeviceCollection()
+        # dev_collect = nidaqmx.system._collections.device_collection.DeviceCollection() # For nidaqmx version 0.7
+        dev_collect = nidaqmx.system.System.local().devices # for nidaqmx version 0.8
         for i in dev_collect.device_names:
             # get available CO channels for each DAQ device
-            ch_collect = nidaqmx.system._collections.physical_channel_collection.COPhysicalChannelCollection(i)
+            # ch_collect = nidaqmx.system._collections.physical_channel_collection.COPhysicalChannelCollection(i) # for nidaqmx version 0.7
+            ch_collect = nidaqmx.system.Device(i).co_physical_chans # for nidaqmx version 0.8
             for j in ch_collect.channel_names:
                 # add available CO channels to comboBox option list
                 self.counter_cb.addItem(j)
