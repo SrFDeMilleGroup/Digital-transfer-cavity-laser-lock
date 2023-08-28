@@ -1,15 +1,12 @@
 import sys
 import time
 import logging
-import traceback
 import configparser
 import numpy as np
 from scipy import signal
 from scipy import sparse
 from scipy.sparse import linalg
 import PyQt5
-import pyqtgraph as pg
-import PyQt5.QtGui as QtGui
 import PyQt5.QtWidgets as qt
 import os
 import nidaqmx
@@ -405,7 +402,7 @@ class laserColumn(abstractLaserColumn):
         elif self.config["freq source"] == "global":
             self.global_rb.setChecked(True)
         else:
-            logging.info("LaserColumn: invalid frequency setpoint source")
+            logging.warning(f"LaserColumn {self.index}: invalid frequency setpoint source: {self.config['freq source']}.")
 
     def save_config(self):
         config = super().save_config()
@@ -519,7 +516,7 @@ class daqThread(PyQt5.QtCore.QThread):
                     self.cavity_last_feedback = cavity_feedback
                     self.cavity_output = self.parent.cavity.config["offset"] + cavity_feedback
                 else:
-                    logging.warning("cavity feedback voltage is NaN.")
+                    logging.warning("Cavity feedback voltage is NaN.")
                     self.cavity_output = self.parent.cavity.config["offset"] + self.cavity_last_feedback
                 self.cavity_last_err[0] = self.cavity_last_err[1]
                 self.cavity_last_err[1] = cavity_err
@@ -555,7 +552,7 @@ class daqThread(PyQt5.QtCore.QThread):
                             self.laser_last_feedback[i] = laser_feedback
                             self.laser_output[i] = laser.config["offset"] + laser_feedback
                         else:
-                            logging.warning(f"laser {i} feedback voltage is NaN.")
+                            logging.warning(f"Laser {i} feedback voltage is NaN.")
                             self.laser_output[i] = laser.config["offset"] + self.laser_last_feedback[i]
                         self.laser_last_err[i][0] = self.laser_last_err[i][1]
                         self.laser_last_err[i][1] = laser_err
@@ -680,7 +677,7 @@ class daqThread(PyQt5.QtCore.QThread):
             # generate laser piezo feedback voltage from ao channels
             self.laser_ao_task.write(self.laser_output)
         except nidaqmx.errors.DaqError as err:
-            logging.error(f"A DAQ error happened at laser ao channels \n{err}")
+            logging.error(f"A DAQ error happened at laser ao channels.", exc_info=True)
 
         # check if cavity feedback voltage exceeds the limit allowed value set by user, and cap it to the allowed value if so
         self.cavity_output = np.clip(self.cavity_output, self.parent.config["min cav ao"], self.parent.config["max cav ao"] - self.parent.config["scan amp"])
@@ -699,7 +696,7 @@ class daqThread(PyQt5.QtCore.QThread):
             # But this way reduces performance.
 
             # This error may only occur in PCIe-6259 or similar DAQs
-            logging.info(f"This is the {self.err_counter}-th time error occurs. \n{err}")
+            logging.info(f"This is the {self.err_counter}-th time error occurs.", exc_info=True)
             # Abort task, see https://zone.ni.com/reference/en-XX/help/370466AH-01/mxcncpts/taskstatemodel/
             self.cavity_ao_task.control(nidaqmx.constants.TaskMode.TASK_ABORT)
             # write to and and restart task
@@ -740,7 +737,7 @@ class daqThread(PyQt5.QtCore.QThread):
             count += 1
 
             if count > niter:
-                logging.warning('Maximum number of iterations exceeded')
+                logging.warning(f'Maximum number of iterations ({niter}) in arPLS baseline removal algorithm exceeded.')
                 break
 
         if full_output:
@@ -770,7 +767,7 @@ class tcpThread(PyQt5.QtCore.QThread):
         self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_sock.bind((self.host, self.port))
         self.server_sock.listen()
-        logging.info(f"listening on: ({self.host}, {self.port})")
+        logging.info(f"TCP/IP thread listening on: ({self.host}, {self.port}).")
         self.server_sock.setblocking(False)
         self.sel.register(self.server_sock, selectors.EVENT_READ, data=None)
 
@@ -791,7 +788,7 @@ class tcpThread(PyQt5.QtCore.QThread):
                     try:
                         data = s.recv(1024) # 1024 bytes should be enough for our data
                     except Exception as err:
-                        logging.error(f"TCP connection error: \n{err}")
+                        logging.error(f"TCP connection error.", exc_info=True)
                         continue
                     if data:
                         self.data += data
@@ -808,13 +805,13 @@ class tcpThread(PyQt5.QtCore.QThread):
                                 s.sendall(self.data[:10])
                                 # self.do_task.write([True, False]*20)
                             except Exception as err:
-                                logging.error(f"TCP Thread error: \n{err}")
+                                logging.error(f"TCP Thread error.", exc_info=True)
                                 s.sendall(self.data[:10])
                             finally:
                                 self.data = self.data[10:]
                     else:
                         # empty data will be interpreted as the signal of client shutting down
-                        logging.info("client shutting down...")
+                        logging.info("TCP/IP client shutting down...")
                         self.sel.unregister(s)
                         s.close()
                         self.signal.emit({"type": "close connection"})
@@ -826,7 +823,7 @@ class tcpThread(PyQt5.QtCore.QThread):
 
     def accept_wrapper(self, sock):
         conn, addr = sock.accept()  # Should be ready to read
-        logging.info(f"accepted connection from: {addr}")
+        logging.info(f"TCP thread accepted connection from: {addr}")
         conn.setblocking(False)
         self.sel.register(conn, selectors.EVENT_READ, data=123) # In this application, 'data' keyword can be anything but None
         return_dict = {}
@@ -840,7 +837,6 @@ class mainWindow(qt.QMainWindow):
         self.app = app
         self.config = {}
         self.active = False
-        logging.getLogger().setLevel("INFO")
 
         self.box = NewBox(layout_type="grid")
         self.box.frame.setRowStretch(0, 3)
@@ -868,15 +864,17 @@ class mainWindow(qt.QMainWindow):
 
         cf = configparser.ConfigParser()
         cf.optionxform = str # make config key name case sensitive
-        cf.read("saved_settings\config_latest.ini")
+        cf.read(os.path.join(base_path, "saved_settings\config_latest.ini"))
 
         self.update_daq_channel()
         self.update_config(cf)
         self.update_widgets()
 
+        self.setWindowIcon(PyQt5.QtGui.QIcon(os.path.join(base_path, 'icon\Dev8-Cavity-Lock-Icon.png')))
+
         self.scan_plot.setRange(yRange=(0, self.cavity.config["peak height"]*2.6))
 
-        # type of data that will be written into a hdf file for logging
+        # type of data that will be written into a hdf file for data logging
         self.dtp = [('time', h5py.string_dtype(encoding='utf-8')), ('cavity DAQ voltage/V', 'f')]
         for i in range(len(self.laser_list)):
             self.dtp.append((f'laser{i} freq/MHz', 'f'))
@@ -1086,6 +1084,7 @@ class mainWindow(qt.QMainWindow):
         self.config["scan time"] = config["Setting"].getfloat("scan time/ms")
         self.config["scan ignore"] = config["Setting"].getfloat("scan ignore/ms")
         self.config["sampling rate"] = config["Setting"].getint("sampling rate")
+        self.config["max sampling rate"] = config["Setting"].getint("max sampling rate")
         self.config["cavity FSR"] = config["Setting"].getfloat("cavity FSR/MHz")
         self.config["lock criteria"] = config["Setting"].getfloat("lock criteria/MHz")
         self.config["RMS length"] = config["Setting"].getint("RMS length")
@@ -1118,6 +1117,7 @@ class mainWindow(qt.QMainWindow):
 
         self.scan_amp_dsb.setValue(self.config["scan amp"])
         self.samp_rate_sb.setValue(self.config["sampling rate"])
+        self.samp_rate_sb.setMaximum(self.config["max sampling rate"])
         self.cavity_fsr_dsb.setValue(self.config["cavity FSR"])
         self.lock_criteria_dsb.setValue(self.config["lock criteria"])
         self.rms_length_sb.setValue(self.config["RMS length"])
@@ -1159,7 +1159,7 @@ class mainWindow(qt.QMainWindow):
     # load settings from a local .ini file
     def load_setting(self):
         # open a file dialog to choose a configuration file to load
-        file_name, _ = qt.QFileDialog.getOpenFileName(self,"Load settigns", "saved_settings/", "All Files (*);;INI File (*.ini)")
+        file_name, _ = qt.QFileDialog.getOpenFileName(self,"Load settigns", os.path.join(base_path, "saved_settings/"), "All Files (*);;INI File (*.ini)")
         if not file_name:
             return
 
@@ -1181,7 +1181,7 @@ class mainWindow(qt.QMainWindow):
                 file_name += "_"
             file_name += time.strftime("%Y%m%d_%H%M%S")
         file_name += ".ini"
-        file_name = r"saved_settings/"+file_name
+        file_name = os.path.join(base_path, r"saved_settings/"+file_name)
 
         # check if the file name already exists
         if os.path.exists(file_name):
@@ -1211,6 +1211,7 @@ class mainWindow(qt.QMainWindow):
         config["Setting"]["scan time/ms"] = str(self.config["scan time"])
         config["Setting"]["scan ignore/ms"] = str(self.config["scan ignore"])
         config["Setting"]["sampling rate"] = str(self.config["sampling rate"])
+        config["Setting"]["max sampling rate"] = str(self.config["max sampling rate"])
         config["Setting"]["cavity FSR/MHz"] = str(self.config["cavity FSR"])
         config["Setting"]["lock criteria/MHz"] = str(self.config["lock criteria"])
         config["Setting"]["RMS length"] = str(self.config["RMS length"])
@@ -1250,6 +1251,8 @@ class mainWindow(qt.QMainWindow):
 
     # start frequency lock
     def start(self):
+        logging.info("Start locking...")
+
         self.start_pb.setText("Stop Lock")
         self.start_pb.disconnect()
         self.start_pb.clicked[bool].connect(self.stop)
@@ -1317,7 +1320,10 @@ class mainWindow(qt.QMainWindow):
         t = time.time()
         if t - self.last_time_logging > 120: # in second
             data = [time.strftime("%H:%M:%S"), dict["cavity output"]] + act_freq
-            with h5py.File(self.config["hdf_filename"] + "_" + time.strftime("%Y%b") + ".hdf", "a") as hdf_file:
+            hdf_filename = os.path.join(base_path, self.config["hdf_filename"] + "_" + time.strftime("%Y%b") + ".hdf")
+            if not os.path.exists(os.path.dirname(hdf_filename)):
+                os.makedirs(os.path.dirname(hdf_filename))
+            with h5py.File(hdf_filename, "a") as hdf_file:
                 key = time.strftime("%b%d")
                 if key in hdf_file.keys():
                     dset = hdf_file[key]
@@ -1341,6 +1347,8 @@ class mainWindow(qt.QMainWindow):
 
     # stop frequency lock
     def stop(self):
+        logging.info("Stop locking...")
+
         self.daq_stop()
 
         self.start_pb.setText("Start Lock")
@@ -1433,7 +1441,7 @@ class mainWindow(qt.QMainWindow):
         elif dict["type"] == "data":
             self.laser_list[dict["laser"]].global_freq_la.setText("{:.1f} MHz".format(dict["freq"]))
         else:
-            logging.warning("TCP thread return dict type not supported")
+            logging.warning("TCP thread return dict type not supported.")
 
     def tcp_restart(self):
         self.tcp_stop()
@@ -1461,11 +1469,12 @@ class mainWindow(qt.QMainWindow):
     def closeEvent(self, event):
         if not self.active:
             config = self.compile_config()
-            configfile = open("saved_settings\config_latest.ini", "w")
+            configfile = open(os.path.join(base_path, "saved_settings\config_latest.ini"), "w")
             config.write(configfile)
             configfile.close()
 
             super().closeEvent(event)
+            logging.info("Program closing...")
 
         else:
             # ask if continue to close
@@ -1474,16 +1483,56 @@ class mainWindow(qt.QMainWindow):
                                 qt.QMessageBox.Yes | qt.QMessageBox.No,
                                 qt.QMessageBox.No)
             if ans == qt.QMessageBox.Yes:
+                self.stop()
+
                 config = self.compile_config()
-                configfile = open("saved_settings\config_latest.ini", "w")
+                configfile = open(os.path.join(base_path, "saved_settings\config_latest.ini"), "w")
                 config.write(configfile)
                 configfile.close()
 
                 super().closeEvent(event)
+                logging.info("Program closing...")
             else:
                 event.ignore()
 
+
 if __name__ == '__main__':
+
+    # Set base path to be the folder containing main.py (this file),
+    # so the porgram can access logging folder, saved_settings folder, etc.
+    path_found = True
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # if running windows executable
+        base_path = os.path.dirname(sys.executable)
+        base_path_list = base_path.split('\\')
+        if base_path_list[-1] == "dist":
+            # if "--onefile" option is used in PyInstaller, the default executable path is ....\dist\Devx-Cavity-Lock.exe
+            base_path = os.path.dirname(base_path)
+        elif base_path_list[-2] == "dist":
+            # if "--onefile" option is not used in PyInstaller, the default executable path is ....\dist\Devx-Cavity-Lock\Devx-Cavity-Lock.exe
+            base_path = os.path.dirname(os.path.dirname(base_path))
+        else:
+            # This shouldn't happen, but if it happens, the line below won't do much either...
+            path_found = False
+            base_path = os.path.dirname(os.getcwd())
+    else:
+        # if running main.py directly in python environment
+        base_path = os.path.dirname(os.path.abspath(__file__))
+
+
+    if not os.path.exists(os.path.join(base_path, "system_logging")):
+        os.makedirs(os.path.join(base_path, "system_logging"))
+    logging.basicConfig(filename=os.path.join(base_path, "system_logging\log_"+time.strftime("%Y%b%d")+".txt"), 
+                        filemode='a', format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
+    logging.info("Program starting...")
+    if not path_found:
+        logging.error(f"Base path not found. os.path.dirname(sys.executable) returns {os.path.dirname(sys.executable)}. Using os.getcwd() instead.")
+    logging.info(f"Set base path to: {base_path}")
+
+    # apply a unique ID to the app to avoid Windows 10 from grouping multiple instances of the app into one taskbar icon
+    myappid = u'Dev8-Cavity-Lock' # basically any arbitrary string should work
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid) 
+
     # Thanks O. Grasdijk for pointing this out,
     # nidaqmx.Task.read() uses windows timer for timing, higher timer resolution can improve loop performance
     # default resolution can vary in differnt computers
