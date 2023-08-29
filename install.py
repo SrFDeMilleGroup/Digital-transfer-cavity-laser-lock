@@ -36,6 +36,10 @@ options += ['--icon=./icon/Dev8-Cavity-Lock-Icon.ico']
 # https://stackoverflow.com/questions/71226142/pyinstaller-with-nidaqmx
 options += ['--copy-metadata=nidaqmx']
 
+# path to site packages
+# default of PyInstaller.__file__ should be ....\AppData\Local\Programs\Python\Python310\lib\site-packages\PyInstaller\__init__.py
+options += ['--paths=' + "\\".join(PyInstaller.__file__.split('\\')[:-2])]
+
 # run PyInstaller
 PyInstaller.__main__.run(options)
 

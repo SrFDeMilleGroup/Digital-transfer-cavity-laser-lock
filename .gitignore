@@ -8,7 +8,6 @@ system_logging/
 
 !saved_settings/config_latest.ini
 !saved_settings/cavity_lock_setting_example.ini
-!logging/ReadMe.txt
 
 build/
 dist/

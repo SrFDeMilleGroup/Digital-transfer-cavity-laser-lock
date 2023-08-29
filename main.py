@@ -1519,7 +1519,6 @@ if __name__ == '__main__':
         # if running main.py directly in python environment
         base_path = os.path.dirname(os.path.abspath(__file__))
 
-
     if not os.path.exists(os.path.join(base_path, "system_logging")):
         os.makedirs(os.path.join(base_path, "system_logging"))
     logging.basicConfig(filename=os.path.join(base_path, "system_logging\log_"+time.strftime("%Y%b%d")+".txt"), 
