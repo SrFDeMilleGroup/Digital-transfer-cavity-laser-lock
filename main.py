@@ -531,6 +531,8 @@ class daqThread(PyQt5.QtCore.QThread):
                         self.laser_peak_found[i] = True
                         # choose a frequency setpoint source
                         freq_setpoint = laser.config["global freq"] if laser.config["freq source"] == "global" else laser.config["local freq"]
+                        # freq_setpoint = freq_setpoint % self.parent.config["cavity FSR"]
+                        # freq_setpoint = freq_setpoint + self.parent.config["cavity FSR"] if freq_setpoint < 0 else freq_setpoint # ensure positive
                         
                         # calculate laser frequency error signal, use the peak that's closest to the setpoint
                         laser_err = freq_setpoint - (laser_peak*self.dt*1000-cavity_first_peak)/cavity_pk_sep*self.parent.config["cavity FSR"]*(laser.config["wavenumber"]/self.parent.cavity.config["wavenumber"])
