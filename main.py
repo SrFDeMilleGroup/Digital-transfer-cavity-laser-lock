@@ -868,7 +868,7 @@ class mainWindow(qt.QMainWindow):
 
         cf = configparser.ConfigParser()
         cf.optionxform = str # make config key name case sensitive
-        cf.read("saved_settings\config_latest.ini")
+        cf.read("saved_settings/config_latest.ini")
 
         self.update_daq_channel()
         self.update_config(cf)
@@ -1461,7 +1461,7 @@ class mainWindow(qt.QMainWindow):
     def closeEvent(self, event):
         if not self.active:
             config = self.compile_config()
-            configfile = open("saved_settings\config_latest.ini", "w")
+            configfile = open("saved_settings/config_latest.ini", "w")
             config.write(configfile)
             configfile.close()
 
@@ -1475,7 +1475,7 @@ class mainWindow(qt.QMainWindow):
                                 qt.QMessageBox.No)
             if ans == qt.QMessageBox.Yes:
                 config = self.compile_config()
-                configfile = open("saved_settings\config_latest.ini", "w")
+                configfile = open("saved_settings/config_latest.ini", "w")
                 config.write(configfile)
                 configfile.close()
 
