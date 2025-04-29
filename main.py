@@ -111,7 +111,7 @@ class abstractLaserColumn(qt.QGroupBox):
         voltage_box = NewBox(layout_type="form")
         self.frame.addWidget(voltage_box)
 
-        self.offset_dsb = NewDoubleSpinBox(range=(-10, 10), decimals=2, suffix=" V")
+        self.offset_dsb = NewDoubleSpinBox(range=(-10, 10), decimals=3, suffix=" V")
         self.offset_dsb.valueChanged[float].connect(lambda val, text="offset": self.update_config_elem(text, val))
         voltage_box.frame.addRow("Offset:", self.offset_dsb)
 
